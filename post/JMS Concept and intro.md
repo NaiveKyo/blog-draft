@@ -6,11 +6,11 @@
 - [JSR914](https://www.jcp.org/en/jsr/detail?id=914)
 - 旧的 JMS 官网：https://javaee.github.io/jms-spec/
 - 新的 JMS（Jakarta Messaging）：https://projects.eclipse.org/projects/ee4j.messaging
-- wiki：https://github.com/jakartaee/messaging/wiki
+- Jakarta Messaging 版本：https://jakarta.ee/specifications/messaging/
 
 
 
-# 简介
+# JMS 简介
 
 远程方法调用叫做 RPC（Remote procedure call），一般包含 Java RMI，它是同步的：调用者调用远程方法时必须阻塞直到方法完成并返回执行结果，此种方式过于依赖远程方法，耦合度过高。换句话说，RPC 系统要求客户端和服务端在同一时间必须都是正常的，而在某些应用当中这种使用场景就不太合适了。
 
@@ -45,7 +45,7 @@ JMS 支持两种不同的消息传递模型：
 
 ## 3、JMS 编程模型
 
-一个 JMS 程序由一组程序定义消息（application-define message）和一组 exchange（交换机）message 的 clients 组成。JMS clients 彼此通过 JMS API 发送和接收消息从而进行交互，消息由三部分组成：header、properties 和 a body：
+一个 JMS 程序由一组程序定义消息（application-define message）和一组 exchange message 的 clients 组成。JMS clients 彼此通过 JMS API 发送和接收消息从而进行交互，消息由三部分组成：header、properties 和 a body：
 
 - header：每条消息都必须有的，它包含用于路由消息的以及标识消息的数据，这些数据有一部分在 JMS Provider 制造消息和传递消息的就设置了，然后剩下的由客户端在处理消息时根据消息信息来设置；
 - properties：它是可选的，一般提供客户端用于筛选消息的数据，它提供一些附加信息，比如谁创建了这条消息、什么时候创建的。Properties 可以看作是 Header 的一个扩展，它由键值对组成，client 可以利用 properties 来微调消息；
@@ -189,4 +189,65 @@ JMS 定义了两种投递模式：
 
 JMS 在 J2EE 平台上使用的很广泛，其中一个很棒的例子就是 message-dirven beans，它是 EJBs 在 EJB 2.0/2.1 中声明的一个种类，另外两个是 session beans 和 entity beans，但是后两者只能同步调用。
 
-MDB（JMS Message-Driven Bean）是实现 JMS MessageListener 接口的 JMS 消息消费者。当 MDB 容器接收到消息时调用 `onMessage()` 方法。注意，我们不需要调用 MDBs 的远程方法，实际上也根本没有相关定义
+MDB（JMS Message-Driven Bean）是实现 JMS MessageListener 接口的 JMS 消息消费者。当 MDB 容器接收到消息时调用 `onMessage()` 方法。注意，我们不需要调用 MDBs 的远程方法，实际上也根本没有相关定义。
+
+
+
+# JMS 2.0 Final Release
+
+文档：
+
+- JMS 2.0：https://javaee.github.io/jms-spec/pages/JMS20FinalRelease
+- JMS 2.0 勘误表：https://javaee.github.io/jms-spec/pages/JMS20RevA
+
+2013 年 5 月 21 号发布了 JMS 2.0 规范，后续又经历了一些修正。
+
+## 新的概念及改变
+
+JMS 2.0 声明要求 JMS 的提供者必须实现 P2P（点对点） 和  Pub-Sub（发布/订阅），下面是 JMS 2.0 添加的一些新东西：
+
+- Delivery delay（延迟投递）：消息生产者可以指定消息在指定时间之后再投递；
+- 提供了一些新的方法用于消息的异步发送；
+- JMS 提供者需要为消息增加一个名为 JMSXDeliveryCount 的属性。
+
+为了提高可伸缩性，做了以下更改：
+
+- 现在允许应用程序再同一个持久或者非持久主题订阅上创建多个消费者，在 JMS 之前的版本中只允许有一个消费者进行订阅。
+
+对 JMS/API 做了修改以便于更方便简洁的使用它们：
+
+- Connection、Session 以及其他的对象都实现了 `java.lang.AutoCloseable` 接口，这样就可以使用 Java SE 7 提供的 `try-with-resources` 这种语法糖了；
+- 提供了一个新的 "simplified API" ，它提供了标准 API 更加简单的替代方案，特别是在 J2EE 程序中；
+- 提供了新的方法用于创建 session，该方法不需要一些冗余的参数；
+- 在创建非共享持久化订阅时必须设置 Client ID 这一点不变，但是在创建可共享的持久化订阅时设置 Client ID 是可选的；
+- 为 Message 提供了一个方法 `getBody()` 用于直接提取消息体，这样就不需要先把消息转换为合适的类型之后再获取数据了；
+
+参考：
+
+- [What's New in JMS 2.0, Part One: Ease of Use](https://www.oracle.com/technical-resources/articles/java/jms20.html)
+- [What's New in JMS 2.0, Part Two—New Messaging Features](https://www.oracle.com/technical-resources/articles/java/jms2messaging.html)
+
+
+
+# Jakarta Messaging
+
+后续 JMS 迁移到了 Jakarta Messaging 项目中：
+
+- 官网：https://projects.eclipse.org/projects/ee4j.messaging
+- GitHub wiki：https://github.com/jakartaee/messaging/wiki
+
+注意它所需的 JDK 版本和 Maven 版本：Java 8+ & Maven 3+。
+
+相关说明去 GitHub 仓库中查看，比如 https://github.com/jakartaee/messaging/blob/master/spec/src/main/asciidoc/messaging-spec.adoc
+
+这里可以看到更多关于 JMS 的信息。
+
+JMS 3.0 规范可以在：https://jakarta.ee/specifications/messaging/3.0/jakarta-messaging-spec-3.0.html 中查看。
+
+顺带一提 Java EE 名称改为 Jakarta EE 了：
+
+- https://blogs.oracle.com/javamagazine/post/transition-from-java-ee-to-jakarta-ee
+
+
+
+## TODO JMS 3.0
