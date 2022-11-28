@@ -1126,3 +1126,201 @@ out.println(instance);
 ```
 
 获取无参构器，然后使用 AccessibleObject 提供的方法获取访问权，最后生成实例。
+
+
+
+## 4、members
+
+Reflection 包中定义了名为 `java.lang.reflect.Member`  的接口，看一下它的继承树：
+
+![](https://cdn.jsdelivr.net/gh/NaiveKyo/CDN/img/20221128220640.png)
+
+这一章节要研究的就是它们，包括每种 Member 关联的用于检索声明、类型信息的 API，各自特有的 API（比如设置 Field、调用 Method），以及一些常见的错误。
+
+需要注意的是：自 Java SE 7  Specification 开始，类的成员包括类主体的继承组件，包括字段、方法、嵌套类、接口和枚举类型。由于 Constructor 是不可以继承的，所以它不属于成员（这个成员和 `java.lang.reflect.Member` 的概念不一样）。
+
+### Fields
+
+Fields 包括类型和一个值。`java.lang.reflect.Field` 提供了从一个 Object 中获取类型信息、set/get 值的方法。
+
+#### （1）获取 Field Types
+
+本小节展示如何获取字段的声明类型和泛型类型。
+
+一个字段要么是原始数据类型，要么是引用类型。
+
+- 原始数据类型有八种：boolean、byte、short、int、long、char、float 和 double；
+- 引用类型是 `java.lang.Object` 的直接或间接的子类，包括接口、数组和枚举类型。
+
+下面的代码展示了如何获取字段的类和泛型类型：
+
+```java
+public class FieldSpy<T> {
+    
+    public boolean[][] b = { { false, false }, { true, true } };
+    
+    public String name = "Alice";
+    
+    public List<Integer> list;
+    
+    public T val;
+    
+    public static void retrieveFileTypeInfo(String... args) {
+        try {
+            Class<?> c = Class.forName(args[0]);
+            Field f = c.getField(args[1]);
+
+            System.out.printf("Type: %s%n", f.getType());
+            System.out.printf("GenericType: %s%n%n", f.getGenericType());
+        } catch (NoSuchFieldException e) {
+            e.printStackTrace();
+        } catch (ClassNotFoundException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public static void main(String[] args) {
+        retrieveFileTypeInfo("io.naivekyo.members.FieldSpy", "b");
+        retrieveFileTypeInfo("io.naivekyo.members.FieldSpy", "name");
+        retrieveFileTypeInfo("io.naivekyo.members.FieldSpy", "list");
+        retrieveFileTypeInfo("io.naivekyo.members.FieldSpy", "val");
+    }
+}
+```
+
+预期输出：
+
+```
+Type: class [[Z
+GenericType: class [[Z
+
+Type: class java.lang.String
+GenericType: class java.lang.String
+
+Type: interface java.util.List
+GenericType: java.util.List<java.lang.Integer>
+
+Type: class java.lang.Object
+GenericType: T
+```
+
+字段 b 是一个二维数组，通过 `getType()` 获取的信息等同于对二维数组的 Class 对象调用 `getName()` 方法（`boolean[][].class.getName()`）；
+
+字段 val 是泛型，但是调用 `getType()` 获取到的信息是 `java.lang.Object`，这是因为泛型是通过泛型擦除实现的，这种机制将会在编译器擦除和泛型类型有关的任何信息，因此 T 将会被替换为类型变量的上限，在这个例子中就是 `java.lang.Object`。
+
+（补充：例如 `V extends HashMap`，泛型擦除后 V 就是 HashMap 类型）
+
+`Field.getGenericType()` 在类上存在签名属性的情况下，会去查询相关属性，如果属性不存在（没有泛型），就会回退到 `Field.getType()` ，对于其他的类似 `getGenericXxx()` 的反射 API，相关处理逻辑都是类似的。
+
+#### （2）检索和解析字段修饰符
+
+本小节演示如何获取字段声明的部分，比如 public 或者 transient。
+
+下面展示可以用在字段上的声明修饰符：
+
+- 访问修饰符：public、protected 和 private；
+- 涉及字段运行时行为的修饰符：transient、volatile；
+- 限制只能拥有一个实例：static；
+- 阻止修改字段：final；
+- 注解。
+
+`Field.getModifiers()` 方法返回表示该字段修饰符集的一个整数，在 `java.lang.reflect.Modifier` 中定义了这个整数对应的修饰符。
+
+下面的例子展示了如何通过给定的修饰符查找字段、判断字段是否为编译器生成的还是枚举常量。
+
+```java
+enum Spy { BLACK, WHITE }
+
+public class FieldModifierSpy {
+    
+    volatile int share;
+    
+    int instance;
+    
+    class Inner {}
+    
+    private static int modifierFromString(String s) {
+        int m = 0x0;
+        if ("public".equals(s))
+            m |= Modifier.PUBLIC;
+        else if ("protected".equals(s))
+            m |= Modifier.PROTECTED;
+        else if ("private".equals(s))
+            m |= Modifier.PRIVATE;
+        else if ("static".equals(s))
+            m |= Modifier.STATIC;
+        else if ("final".equals(s))
+            m |= Modifier.FINAL;
+        else if ("transient".equals(s))
+            m |= Modifier.TRANSIENT;
+        else if ("volatile".equals(s))
+            m |= Modifier.VOLATILE;
+        return m;
+    }
+    
+    public static void retrieveAndParseFieldModifier(String... args) {
+        try {
+            Class<?> c = Class.forName(args[0]);
+            int searchMods = 0x0;
+            for (int i = 0; i < args.length; i++) {
+                searchMods |= modifierFromString(args[i]);
+            }
+
+            Field[] flds = c.getDeclaredFields();
+            System.out.printf("Fields in Class '%s' containing modifiers: %s%n", c.getName(), Modifier.toString(searchMods));
+            boolean found = false;
+            for (Field f : flds) {
+                int foundMods = f.getModifiers();
+                // Require all of the requested modifiers to be present
+                if ((foundMods & searchMods) == searchMods) {
+                    System.out.printf("%-8s [ synthetic=%-5b enum_constant=%-5b ]%n", f.getName(), f.isSynthetic(), f.isEnumConstant());
+                    found = true;
+                }
+            }
+            
+            if (!found) {
+                System.out.printf("No matching fields%n");
+            }
+            System.out.println();
+        } catch (ClassNotFoundException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public static void main(String[] args) {
+        retrieveAndParseFieldModifier("io.naivekyo.members.FieldModifierSpy", "volatile");
+        retrieveAndParseFieldModifier("io.naivekyo.members.Spy", "public");
+        retrieveAndParseFieldModifier("io.naivekyo.members.FieldModifierSpy$Inner", "final");
+        retrieveAndParseFieldModifier("io.naivekyo.members.Spy", "private", "static", "final");
+    }
+}
+```
+
+预期输出：
+
+```
+Fields in Class 'io.naivekyo.members.FieldModifierSpy' containing modifiers: volatile
+share    [ synthetic=false enum_constant=false ]
+
+Fields in Class 'io.naivekyo.members.Spy' containing modifiers: public
+BLACK    [ synthetic=false enum_constant=true  ]
+WHITE    [ synthetic=false enum_constant=true  ]
+
+Fields in Class 'io.naivekyo.members.FieldModifierSpy$Inner' containing modifiers: final
+this$0   [ synthetic=true  enum_constant=false ]
+
+Fields in Class 'io.naivekyo.members.Spy' containing modifiers: private static final
+$VALUES  [ synthetic=true  enum_constant=false ]
+```
+
+从输出的内容中可以看到有些字段没有在源码中显式声明，但是它依旧被打印了出来（比如：`this$0`、`$VALUES`），这是因为编译器要生成一些在运行时使用的合成字段，使用 `Field.isSynthetic()` 方法可以判断该字段是否是编译器合成的。
+
+`this$0` 指内部类（非静态成员类的嵌套类）对外部类的引用。
+
+`$VALUES` 是枚举用于实现隐式定义的静态方法 `values()` 的合成变量；
+
+注意合成的类成员的名称没有显式指定，在所有编译器实现或不同版本中可能不相同。
+
+在 `Class.getDeclaredFields()` 方法返回的数组中包括了这些合成字段，但是 `Class.getField()` 中没有，因为合成的成员通常不是 public 的。
+
+最后因为 Field 实现了 `java.lang.reflect.AnnotatedElement` 接口，所以字段上面也可以标注注解，在运行时可以获取到注解信息，这一点在前面的 Class 章节的 "检测类修饰符和类型" 小节中已经说明了。
