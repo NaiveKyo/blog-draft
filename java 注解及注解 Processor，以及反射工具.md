@@ -1324,3 +1324,178 @@ $VALUES  [ synthetic=true  enum_constant=false ]
 在 `Class.getDeclaredFields()` 方法返回的数组中包括了这些合成字段，但是 `Class.getField()` 中没有，因为合成的成员通常不是 public 的。
 
 最后因为 Field 实现了 `java.lang.reflect.AnnotatedElement` 接口，所以字段上面也可以标注注解，在运行时可以获取到注解信息，这一点在前面的 Class 章节的 "检测类修饰符和类型" 小节中已经说明了。
+
+#### （3）操控字段值 get/set
+
+在某种情况下不能直接操作某个实例的属性，此时可以通过反射来操作字段的值，但是这种操作违背的类设计的初衷（封装性，对外通过 get/set 操作字段），所以需要谨慎使用。
+
+看下面的例子：
+
+```java
+enum Tweedle { DEE, DUM }
+public class Book {
+    
+    public long chapters = 0;
+    
+    public String[] characters = { "Alice", "White Rabbit" };
+    
+    public Tweedle twin = Tweedle.DEE;
+    
+    public static void example(String... args) {
+        Book book = new Book();
+        String fmt = "%6S: %-12s = %s%n";
+        
+        try {
+            Class<? extends Book> c = book.getClass();
+            Field chap = c.getDeclaredField("chapters");
+
+            System.out.printf(fmt, "before", "chapters", chap.getLong(book));
+            chap.setLong(book, 12);
+            System.out.printf(fmt, "after", "chapters", chap.getLong(book));
+
+            Field chars = c.getDeclaredField("characters");
+            System.out.printf(fmt, "before", "characters", Arrays.asList(book.characters));
+            
+            String[] newChars = { "Queen", "King" };
+            chars.set(book, newChars);
+            System.out.printf(fmt, "after", "characters", Arrays.asList(book.characters));
+
+            Field t = c.getDeclaredField("twin");
+            System.out.printf(fmt, "before", "twin", book.twin);
+            t.set(book, Tweedle.DUM);
+            System.out.printf(fmt, "after", "twin", t.get(book));
+
+        } catch (NoSuchFieldException e) {
+            e.printStackTrace();
+        } catch (IllegalAccessException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public static void main(String[] args) {
+        example("io.naivekyo.members.Book");
+    }
+}
+```
+
+注意：通过反射操作字段的值必定会有一定的性能开销，因为要进行各种动态操作，比如验证访问权限。从运行时角度看，通过反射进行的操作和直接在类代码中更改值的效果是一样的。
+
+但是使用反射将导致某些运行时优化策略不生效。
+
+#### （4）可能遇到的问题
+
+> IllegalArgumentException
+
+通常在代码中设置值时，对原始数据类型编译器有时会做自动装/拆箱，但是使用反射就不会，因此会导致一些问题，比如下面的代码：
+
+```java
+public class FieldTrouble {
+    
+    private Integer val;
+
+    public static void main(String[] args) {
+        FieldTrouble ft = new FieldTrouble();
+        Class<FieldTrouble> c = FieldTrouble.class;
+        
+        try {
+            Field f = c.getDeclaredField("val");
+            f.setAccessible(true);
+            f.set(ft, 42);
+        } catch (NoSuchFieldException e) {
+            e.printStackTrace();
+        } catch (IllegalAccessException e) {
+            e.printStackTrace();
+        }
+    }
+}
+```
+
+虽然这段代码在我本地跑起来没有问题，但是官方给出的例子说可能会导致产生 `java.lang.IllegalArgumentException` 异常。
+
+因为官方说提示反射获取和设置值编译器不会采用自动装/拆箱机制（毕竟是运行时）。反射只能转换符合 `Class.isAssignableFrom()` 方法规范的两种类型，例子会失败就是因为 `isAssignableFrom()` 方法返回 false。
+
+```java
+Integer.class.isAssignableFrom(int.class) == false
+int.class.isAssignableFrom(Integer.class) == false
+```
+
+> NoSuchFieldException For Non-Public Fields
+
+出现这个问题还得看获取 Field 的方法，是 getFields() 还是 getDecalredFields()，前面已经提到过两者的区别。
+
+> IllegalAccessException when Modifying Final Fields
+
+试图使用反射修改 private 或者 final 变量时可能会出现此种问题。
+
+解决方案也很简单，看异常名可以得出没有权限修改，然后 Field 又扩展了 AccessibleObject，直接强制取得权限即可。
+
+
+
+### Method
+
+和字段相比，方法就复杂一些了，毕竟它有返回值、参数，还有可能抛出异常。
+
+反射 API 针对 Method 提供了一些方法用于获取参数类型信息和返回值的信息，还可以调用给定实例上的方法。
+
+#### （1）Obtaining Method Type Information
+
+方法声明包括：方法名、修饰符、参数、返回类型以及抛出的异常，`java.lang.reflection.Method` 类提供了用于获取这些信息的方法。
+
+看下面的例子：
+
+```java
+public class MethodSpy {
+    
+    private static final String fmt = "%24s: %s%n";
+    
+    <E extends RuntimeException> void genericThrow() throws E {}
+    
+    public static void retrieveMethods(String... args) {
+        try {
+            Class<?> c = Class.forName(args[0]);
+            Method[] allMethods = c.getDeclaredMethods();
+            for (Method m : allMethods) {
+                if (!m.getName().equals(args[1])) {
+                    continue;
+                }
+                System.out.printf("%s%n", m.toGenericString());
+
+                System.out.printf(fmt, "ReturnType", m.getReturnType());
+                System.out.printf(fmt, "GenericReturnType", m.getGenericReturnType());
+
+                Class<?>[] pType = m.getParameterTypes();
+                Type[] gpType = m.getGenericExceptionTypes();
+                for (int i = 0; i < pType.length; i++) {
+                    System.out.printf(fmt, "ParameterType", pType[i]);
+                    System.out.printf(fmt, "GenericParameterType", gpType[i]);
+                }
+
+                Class<?>[] xType = m.getExceptionTypes();
+                Type[] gxType = m.getGenericExceptionTypes();
+                for (int i = 0; i < xType.length; i++) {
+                    System.out.printf(fmt, "Exception", xType[i]);
+                    System.out.printf(fmt, "GenericExceptionType", gxType[i]);
+                }
+            }
+        } catch (ClassNotFoundException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public static void main(String[] args) {
+        retrieveMethods("java.lang.Class", "getConstructor");
+    }
+}
+```
+
+首先需要注意的是获取泛型的方法，比如 `getGenericReturnType()`，它首先会到类上找相关签名属性，如果没有就会退到调用 `Method.getReturnType()`，也就是说就算没有使用泛型，调用 `getGenericXxx()` 方法也是没有太大影响的，其他的也类似。
+
+其次要注意如果方法参数是可变参数，该参数的类型是 `java.lang.Class`，且实际是一维数组，可以通过调用 `Method.isVarArgs()` 方法来区分。还有就是 `Method.get*Types()` 和 `Class.getName()` 是一样的，这就需要注意泛型擦除了，打印出的泛型的类型实际上是泛型的上界。
+
+最后如果是重载方法，上面的例子会检索打印所有重载的方法，因为它们具有相同的方法名。
+
+TIP：例子中使用了 `Method.getGenericExceptionTypes()` 方法，但是实际环境中很少有方法会返回泛型异常，该 API 的存在仅仅是因为可能存在这种情况。
+
+#### （2）Obtaining Names of Method Parameters
+
+上面我们看了如何获取方法参数的类型，现在看看如何获取参数的名称。
