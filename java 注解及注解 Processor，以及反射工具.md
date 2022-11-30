@@ -1498,4 +1498,233 @@ TIP：例子中使用了 `Method.getGenericExceptionTypes()` 方法，但是实�
 
 #### （2）Obtaining Names of Method Parameters
 
-上面我们看了如何获取方法参数的类型，现在看看如何获取参数的名称。
+上面我们看了如何获取方法参数的类型，现在看看如何获取参数的名称、方法的其他信息以及构造器的参数。
+
+通过 `java.lang.reflect.Executable.getParameters()` 获取任何方法或构造函数的形参名称。（之前提到，Method 和 Constructor 都继承自 Executable）。
+
+还有一点要注意，`.class` 文件（字节码文件）默认情况下不会存储正式的参数名。原因有以下几点：
+
+- 如果字节码文件包含参数的名称，那么文件就会变大，某些处理 `.class` 文件的工具框架就不得不处理大文件了，JVM 也会使用更多的内存空间；
+- 存储参数名将会导致字节码文件占据更多的静态和动态空间；
+- 有些特殊的参数名，比如 `secret`、`password` 也会暴露一些安全性较敏感的方法。
+
+如果希望 `.class` 文件能存储方法的形式参数名称，从而可以利用反射 API 获取形参名，可以使用 javac 编译器的参数 `-parameters`。
+
+更多信息可以参考 Oracle 官方给出的 Javac 编译器知识、jls 等等。
+
+#### （3）Retrieving and Parsing Method Modifiers
+
+本小节学习如何访问和解码 Method 的修饰符以及其他信息。
+
+下面展示了可以用在方法声明上的修饰符：
+
+- 访问修饰符：public、protected、private；
+- 限制一个实例：static；
+- 阻止修改：final；
+- 重写：abstract；
+- 防止重入：synchronized；
+- 其他语言实现的方法：native；
+- 强制严格浮点行为：strictfp；
+- 注解。
+
+下面的例子展示了如何根据方法名解析相关信息，以及展示该方法的类型：
+
+- 编译器生成：synthetic；
+- 可变参数；
+- 桥接方法：编译器为泛型接口生成的方法；
+
+```java
+public class MethodModifierSpy {
+    
+    private static int count;
+    
+    private static synchronized void inc() {
+        count++;
+    }
+    
+    private static synchronized int cnt() {
+        return count;
+    }
+    
+    public static void example(String... args) {
+        try {
+            Class<?> c = Class.forName(args[0]);
+            Method[] allMethods = c.getDeclaredMethods();
+            for (Method m : allMethods) {
+                if (!m.getName().equals(args[1]))
+                    continue;
+                System.out.printf("%s%n", m.toGenericString());
+                System.out.printf(" Modifiers: %s%n", Modifier.toString(m.getModifiers()));
+                System.out.printf(" [ synthetic=%-5b var_args=%-5b bridge=%-5b ]%n", m.isSynthetic(), m.isVarArgs(), m.isBridge());
+                inc();
+            }
+            System.out.printf("%d matching overload%s found%n", cnt(), (cnt() == 1 ? "" : "s"));
+        } catch (ClassNotFoundException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public static void main(String[] args) {
+        //example("java.lang.Object", "wait");
+        //example("java.lang.StrictMath", "toRadians");
+        //example("io.naivekyo.members.method.MethodModifierSpy", "inc");
+        //example("java.lang.Class", "getConstructor");
+        example("java.lang.String", "compareTo");
+    }
+}
+```
+
+有两点需要注意：
+
+（1）测试 `Class.getConstrutor()` 方法时，`Method.isVarArgs()` 返回 true ，这意味着此方法是这样的：
+
+```java
+public Constructor<T> getConstructor(Class<?>... parameterTypes)
+```
+
+而不是：
+
+```java
+public Constructor<T> getConstructor(Class<?> [] parameterTypes)
+```
+
+（2）测试 String 的 `compareTo()` 方法时，输出是这样的：
+
+```
+public int java.lang.String.compareTo(java.lang.String)
+ Modifiers: public
+ [ synthetic=false var_args=false bridge=false ]
+public int java.lang.String.compareTo(java.lang.Object)
+ Modifiers: public volatile
+ [ synthetic=true  var_args=false bridge=true  ]
+2 matching overloads found
+```
+
+一个是自身的 `compareTo(String)` 一个用于桥接泛型接口的方法 `compareTo(Object)` 后者是编译器生成的；
+
+在泛型擦除期间，String 继承的 `Comparable.compareTo()` 方法参数从 `java.lang.Object` 变为 `java.lang.String`。由于 Comparable 和 String 中的 compareTo 方法的参数类型在擦除后不再匹配，因此不会发生重写，在其他情况下， 这将产生编译时错误，因为相当于没有实现接口，桥接方法正是为了解决这个问题而出现的。
+
+更详细的解释一下：
+
+```java
+public interface Comparable<T> {
+ 	public int compareTo(T o);   
+}
+```
+
+泛型擦除后：
+
+```java
+public interface Comparable<Object> {
+ 	public int compareTo(Object o);   
+}
+```
+
+String ：
+
+```java
+public final class String
+    implements java.io.Serializable, Comparable<String>, CharSequence {
+	...
+    compareTo(String anotherString) {...}
+}
+```
+
+从 OOP 分析，此处不是重写也不是重载，String 应该是没有实现接口的，但是编译器为了不报错，生成了一个方法：`public int java.lang.String.compareTo(java.lang.Object)`，进而实现让 String 实现 Comparable 接口的效果。
+
+#### （4）Invoking Methods
+
+本小节学习利用反射 API 执行方法并获得返回值。
+
+反射 API 提供了一种手段用于调用类上的方法，通常情况下在非反射代码中首先需要将实例转换为目标类型，然后才能调用目标类型的方法。
+
+但是呢，反射中的 Method 可以通过 `java.lang.reflect.Method.invoke()` 方法来实现同样的效果，该方法的第一个参数就是目标实例对象（如果目标方法是 static 的，此参数可以为 null），剩下的参数就是目标方法需要的形参，如果目标方法会抛出异常，反射 API 会将其包装为 `java.lang.reflect.InvocationTargetException`，通过异常链就可以找到原始方法异常（`InvocationTargetException.getCause()`）。
+
+> 通过明确的方法声明去找到并调用目标方法
+
+假设有这样的测试场景：通过反射 API 调用目标类的私有方法：
+
+```java
+// 注意这里使用了泛型, 但是方法上没有使用
+public class Deet<T> {
+    
+    private boolean testDeet(Locale l) {
+        // 调用 getISO3Language() 方法可能会抛出 MissingResourceException 异常
+        System.out.printf("Locale = %s ISO Language Code = %s%n", l.getDisplayName(), l.getISO3Language());
+        return true;
+    }
+    
+    private int testFoo(Locale l) {
+        return 0;
+    }
+    
+    private boolean testBar() {
+        return true;
+    }
+    
+    public static void example(String... args) {
+        if (args.length != 4) {
+            System.err.format("Usage: java Deet <classname><language><country><variant>%n");
+            return;
+        }
+        
+        try {
+            Class<?> c = Class.forName(args[0]);
+            Object t = c.newInstance();
+
+            Method[] allMethods = c.getDeclaredMethods();
+            for (Method m : allMethods) {
+                String mName = m.getName();
+                if (!mName.startsWith("test") || (m.getGenericReturnType() != boolean.class)) {
+                    continue;
+                }
+                // 这里调用泛型参数也比较巧妙, 如果没有泛型就回退到普通的 getParameterTypes() 方法
+                Type[] pType = m.getGenericParameterTypes();
+                // 后面的语句可以替换为 Locale.class == pType[0].getClass()
+                // 但是现在的处理更加通用一些
+                if (pType.length != 1 || Locale.class.isAssignableFrom(pType[0].getClass())) {
+                    continue;
+                }
+
+                System.out.printf("invoking %s()%n", mName);
+                try {
+                    m.setAccessible(true);
+                    Object o = m.invoke(t, new Locale(args[1], args[2], args[3]));
+                    System.out.printf("%s() returned %b%n", mName, (Boolean) o);
+                } catch (InvocationTargetException e) {
+                    Throwable cause = e.getCause();
+                    System.err.format("Invocation of %s failed: %s%n", mName, cause.getMessage());
+                }
+            }
+        } catch (ClassNotFoundException e) {
+            e.printStackTrace();
+        } catch (InstantiationException e) {
+            e.printStackTrace();
+        } catch (IllegalAccessException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public static void main(String[] args) {
+        example("io.naivekyo.members.method.Deet", "zh", "ZH", "ZH");
+        //example("io.naivekyo.members.method.Deet", "xx", "XX", "XX");
+    }
+}
+```
+
+测试期望输出：
+
+```
+invoking testDeet()
+Locale = 中文 (ZH,ZH) ISO Language Code = zho
+testDeet() returned true
+
+invoking testDeet()
+Invocation of testDeet failed: Couldn't find 3-letter language code for xx
+```
+
+注意，这个例子中，只有 `testDeet()` 满足匹配条件，如果向 `testDeet()` 传递一个无效参数时，它会抛出一个未检查异常 `java.util.MissingResourceException`，但是在反射中，检查异常和未检查异常的处理没有区别，最终都被包装为 `InvocationTargetException`。
+
+> 调用可变参数方法
+
+`Method.invoke()`
