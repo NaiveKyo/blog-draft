@@ -1129,7 +1129,7 @@ out.println(instance);
 
 
 
-## 4、members
+## 4、Members
 
 Reflection 包中定义了名为 `java.lang.reflect.Member`  的接口，看一下它的继承树：
 
@@ -1727,4 +1727,225 @@ Invocation of testDeet failed: Couldn't find 3-letter language code for xx
 
 > 调用可变参数方法
 
-`Method.invoke()`
+`Method.invoke()`  在调用目标方法时可以同时传递多个参数，如果目标方法的参数是可变参数，可以认为接收的是一个数组：
+
+```java
+public class InvokeMain {
+    
+    public static void simulationMain(String... args) {
+        for (String arg : args) {
+            System.out.println(arg);
+        }
+    }
+
+    public static void main(String[] args) {
+        try {
+            Class<?> c = Class.forName("io.naivekyo.members.method.InvokeMain");
+            // 可变参数的传递, 可以传递数组
+            Class[] argTypes = new Class[] { String[].class };
+            // 通过方法名和参数类型确定某个方法
+            Method m = c.getDeclaredMethod("simulationMain", argTypes);
+
+            System.out.printf("invoking %s.%s()%n", c.getName(), m.getName());
+            
+            // static 方法不用指定实例
+            String[] methodVarArgs = Arrays.copyOfRange(new String[] { "1", "2", "3", "4"}, 0, 3);
+            // 注意这里必须要转型
+            m.invoke(null, (Object) methodVarArgs);
+        } catch (ClassNotFoundException | NoSuchMethodException e) {
+            e.printStackTrace();
+        } catch (InvocationTargetException e) {
+            e.printStackTrace();
+        } catch (IllegalAccessException e) {
+            e.printStackTrace();
+        }
+    }
+}
+```
+
+这里有几点需要注意：
+
+通过反射获取形参为 String 类型的可变参数：`Method m = c.getDeclaredMethod("simulationMain", argTypes)`；
+
+利用反射 API 调用静态且形参为可变参数的方法：`m.invoke(null, (Object) methodVarArgs)`；
+
+> invoke() 方法可能需要注意的地方
+
+invoke 方法的声明：
+
+```java
+public Object invoke(Object obj, Object... args) {...}
+```
+
+它有很多使用方式：
+
+```java
+// 假设目标方法是:
+ public void ping() { System.out.format("PONG!%n"); }
+
+// 常规调用;
+m.invoke(instance);
+
+// 参数为 null, 也可以使用, 但是编译器会警告, 因为 null 参数过于模糊
+m.invoke(mtt, null);
+
+// 下面这样就会提示 IllegalArgumentException, 因为无法确定 null 表示空数组参数还是第一个参数是 null
+Object arg2 = null;
+m.invoke(mtt, arg2);
+
+// 下面这样可以使用, 因为 new Object[0] 创建了一个空数组, 对于拥有可变参数的方法, 这相当于不传递任何参数
+m.invoke(mtt, new Object[0]);
+
+// 提示 IllegalArgumentException, 和上面一个例子不一样, 如果空数组用一个对象存储, 它就真的被当作一个对象使用了, 和第二种情况类似
+Object arg4 = new Object[0];
+m.invoke(mtt, arg4);
+```
+
+现在应该可以明白前面的例子为什么要进行转型了：
+
+```java
+String[] methodVarArgs = Arrays.copyOfRange(new String[] { "1", "2", "3", "4"}, 0, 3);
+m.invoke(null, (Object) methodVarArgs);
+```
+
+因为 invoke 需要的是 `Object[]`（再转换一下就等价于 Object，因为数组也继承 Object），而不是 `String[]`；
+
+
+
+### Constructor
+
+反射中关于构造函数的 API 定义在类 `java.lang.reflect.Constructor` 中，和 Method 类似，但是有两个主要的不同之处：
+
+- 构造函数没有返回值；
+- 调用构造函数为给定类创建一个新的对象实例。
+
+#### Finding Constructors
+
+构造函数的声明包括：名字、修饰符、参数和可能抛出的异常信息，`java.lang.Constructor` 类提供了用于获取这些信息的方法。
+
+下面的例子展示了从指定的类中找到我们想要的构造函数：
+
+```java
+public class ConstructorSift {
+    
+    public static void example(String... args) {
+        try {
+            Class<?> c = Class.forName(args[0]);
+            Class<?> cArg = Class.forName(args[1]);
+            Constructor<?>[] allConstructors = c.getDeclaredConstructors();
+            for (Constructor<?> ctor : allConstructors) {
+                Class<?>[] pType = ctor.getParameterTypes();
+                for (int i = 0; i < pType.length; i++) {
+                    if (pType[i].equals(cArg)) {
+                        System.out.printf("%s%n", ctor.toGenericString());
+
+                        Type[] gpType = ctor.getGenericParameterTypes();
+                        for (int j = 0; j < gpType.length; j++) {
+                            char ch = (pType[j].equals(cArg) ? '*' : ' ');
+                            System.out.printf("%7c%s[%d]: %s%n", ch, "GenericParameterType", j, gpType[j]);
+                        }
+                        break;
+                    }
+                }
+            }
+        } catch (ClassNotFoundException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public static void main(String[] args) {
+        //example("java.util.Formatter", "java.util.Locale");
+        example("java.lang.String", "[C");
+    }
+}
+```
+
+如果是可变参数构造函数：
+
+```
+example("java.lang.ProcessBuilder", "[Ljava.lang.String;");
+
+// expect output:
+public java.lang.ProcessBuilder(java.lang.String...)
+      *GenericParameterType[0]: class [Ljava.lang.String;
+      
+// actual constructor
+public ProcessBuilder(String... command)
+```
+
+泛型参数的构造函数：
+
+```
+example("java.util.HashMap", "java.util.Map");
+
+// expect output:
+public java.util.HashMap(java.util.Map<? extends K, ? extends V>)
+      *GenericParameterType[0]: java.util.Map<? extends K, ? extends V>
+```
+
+最后异常信息的获取和之前 Method 中一样操作，这里就不再赘述了。
+
+#### Creating New Class Instance
+
+有两个反射方法可以构造一个类的实例对象：
+
+- `java.lang.reflect.Constructor.newInstance()`；
+- `Class.newInstance()`；
+
+第一个方法是首选方案，因为：
+
+- `Class.newInstance()` 只能调用无参构造器，而 `Constrocutor.newInstance()` 可以调用任意构造函数，不必在乎形参数量；
+- `Class.newInstance()` 会抛出任意构造函数可能抛出的异常，不管是 checkd 还是 unchecked。而 `Constructor.newInstance()` 会将这些异常包装为 `InvocationTargetException`；
+- `Class.newInstance()` 需要构造函数具有可见性，而 `Constructor.newInstance()` 可以根据需要调用 private 构造器。
+
+考虑这种情况，在构造函数内部实例化对象的某些私有状态，比如说 `java.io.Console` 会在构造函数中设置字符集，下面的例子展示了这是如何实现的：
+
+```java
+public class ConsoleCharset {
+    public static void example() {
+        Constructor<?>[] ctors = Console.class.getDeclaredConstructors();
+        Constructor ctor = null;
+
+        for (int i = 0; i < ctors.length; i++) {
+            ctor = ctors[i];
+            if (ctor.getGenericParameterTypes().length == 0)
+                break;
+        }
+        
+        try {
+            ctor.setAccessible(true);
+            Console c = (Console) ctor.newInstance();
+            Field f = c.getClass().getDeclaredField("cs");
+            f.setAccessible(true);
+            System.out.printf("Console charset         : %s%n", f.get(c));
+            System.out.printf("Charset.defaultCharset(): %s%n", Charset.defaultCharset());
+        } catch (InvocationTargetException e) {
+            e.printStackTrace();
+        } catch (InstantiationException e) {
+            e.printStackTrace();
+        } catch (IllegalAccessException e) {
+            e.printStackTrace();
+        } catch (NoSuchFieldException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public static void main(String[] args) {
+        example();
+    }
+}
+```
+
+Note:
+
+`Class.newInstance()` 只有调用无参构造器且具有访问权限时才会调用成功，否则最好使用 `Constructor.newInstance()` 方法构建实例。
+
+```
+Windows system expect output:
+Console charset         : x-mswin-936
+Charset.defaultCharset(): UTF-8
+```
+
+
+
+## 5、Arrays and Enumerated Types
