@@ -1819,7 +1819,7 @@ m.invoke(null, (Object) methodVarArgs);
 - 构造函数没有返回值；
 - 调用构造函数为给定类创建一个新的对象实例。
 
-#### Finding Constructors
+#### （1）Finding Constructors
 
 构造函数的声明包括：名字、修饰符、参数和可能抛出的异常信息，`java.lang.Constructor` 类提供了用于获取这些信息的方法。
 
@@ -1885,7 +1885,7 @@ public java.util.HashMap(java.util.Map<? extends K, ? extends V>)
 
 最后异常信息的获取和之前 Method 中一样操作，这里就不再赘述了。
 
-#### Creating New Class Instance
+#### （2）Creating New Class Instance
 
 有两个反射方法可以构造一个类的实例对象：
 
@@ -1949,3 +1949,404 @@ Charset.defaultCharset(): UTF-8
 
 
 ## 5、Arrays and Enumerated Types
+
+从 JVM 的角度看，数组和可枚举的类型都是 classes。在它们身上可以使用很多类中的方法，反射机制也为 arrays 和 enums 提供了特殊的 API，本小节学习如何区分和操作它们，以及常见的错误信息。
+
+### Arrays
+
+Arrays 可以简单分为两部分：类型和长度。对它而言可以直接操作整个数组对象也可以操作数组的每个元素，反射提供了 `java.lang.reflect.Array` 类用于实现操作每个元素的功能。
+
+#### （1）Identifying Array Types
+
+本小节讲述如何利用反射 API 区分类成员是否属于数组类型。
+
+通过 `Class.isArray()` 可以确定某个对象是数组类型。
+
+```java
+public class ArrayFind {
+    
+    public static void find(String... args) {
+        boolean found = false;
+        try {
+            Class<?> cls = Class.forName(args[0]);
+            Field[] flds = cls.getDeclaredFields();
+            for (Field f : flds) {
+                Class<?> c = f.getType();
+                if (c.isArray()) {
+                    found = true;
+                    System.out.printf("%s%n" + "\t\tField: %s%n\t\tType: %s%n\t\tComponent Type: %s%n", f, f.getName(), c, c.getComponentType());
+                }
+            }
+            if (!found) {
+                System.out.printf("No array fields%n");
+            }
+        } catch (ClassNotFoundException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public static void main(String[] args) {
+        find("java.nio.ByteBuffer");
+    }
+}
+```
+
+```
+Expect output:
+final byte[] java.nio.ByteBuffer.hb
+		Field: hb
+		Type: class [B
+		Component Type: byte
+```
+
+`Class.get*Type()` 在 `Class.getName()` 方法注释上有描述， `'['` 字符表示数组类型的维度。
+
+#### （2）Creating New Arrays
+
+和非反射代码中创建数组实例一样，反射 API 也提供了 `java.lang.reflect.Array.newInstance()` 方法用于动态创建指定类型和维度的数组实例。
+
+（回忆前面了解的直接通过 Class 创建实例和通过 Constructor 创建实例的异同。）
+
+看下面的例子：
+
+```java
+public class ArrayCreator {
+    
+    private static String s = "java.math.BigInteger bi[] = { 123, 234, 345 }";
+    
+    private static Pattern p = Pattern.compile("^\\s*(\\S+)\\s*\\w+\\[\\].*\\{\\s*([^}]+)\\s*\\}");
+    
+    public static void creator() {
+        Matcher m = p.matcher(s);
+        
+        if (m.find()) {
+            String cName = m.group(1);
+            String[] cVals = m.group(2).split("[\\s,]+");
+            int n = cVals.length;
+            
+            try {
+                Class<?> c = Class.forName(cName);
+                Object o = Array.newInstance(c, n);
+                for (int i = 0; i < n; i++) {
+                    String v = cVals[i];
+                    Constructor<?> ctor = c.getConstructor(String.class);
+                    Object val = ctor.newInstance(v);
+                    Array.set(o, i, val);
+                }
+                Object[] oo = (Object[]) o;
+                System.out.printf("%s[] = %s%n", cName, Arrays.toString(oo));
+            } catch (ClassNotFoundException | NoSuchMethodException e) {
+                e.printStackTrace();
+            } catch (InvocationTargetException e) {
+                e.printStackTrace();
+            } catch (InstantiationException e) {
+                e.printStackTrace();
+            } catch (IllegalAccessException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    public static void main(String[] args) {
+        creator();
+    }
+}
+```
+
+```
+Expect Output:
+java.math.BigInteger[] = [123, 234, 345]
+```
+
+上面的例子展示了如何通过反射 API 构建并填充数组实例。如果类型直到运行时才可以直到，那么就可以使用反射，具体步骤如下：
+
+- 使用 `Class.forName()` 获取 Class 对象并实例化一个对象；
+- 通过数组的每个元素特定的构造器来实例化数组成员；
+- 通过数组反射 API 为数组实例填充元素对象；
+
+#### （3）Getting/Setting Arrays and Their Components
+
+在非反射代码中，我们可以设置和遍历数组元素，而如果使用反射 API，则可以这样：
+
+- 使用 `java.lang.reflect.Field.set(Object obj, Object value)` 设置数组元素实例；
+- 通过 `Field.get(Object)` 获取数组元素；
+- 在调用 `java.lang.reflect.Array` 提供的 API 中调用上面两个方法就可以了。
+
+这些方法也支持可以自动扩展的数据类型，因此，`Array.getShort()` 可以用来设置 int 数组的值，因为 16 位的 short 可以扩展为 32 位的 int 而不会丢失数据；另一方面，如果在一个 int 类型的数组上调用 `Array.setLong()` 方法则会抛出 IllegalArgumentException，因为 64 位的 long 类型不能在不丢失数据的前提下缩小到 32 位的 int 类型。具体信息可以参考 Java 语言规范中的 [Widening Primitive Conversion](https://docs.oracle.com/javase/specs/jls/se7/html/jls-5.html#jls-5.1.2) 和 [Narrowing Primitive Conversion](https://docs.oracle.com/javase/specs/jls/se7/html/jls-5.html#jls-5.1.3) 章节。
+
+数组的引用类型（包括数组的数组）都可以使用 Array 反射 API 进行相关操作，比如 `Array.set(Object array, int index, int value)` 和 `Array.get(Object array, int index)`。
+
+> Setting a Field of Type Array
+
+```java
+public class GrowBufferedReader {
+    
+    private static final int srcBufSize = 10 * 1024;
+    
+    private static char[] src = new char[srcBufSize];
+    
+    static {
+        src[srcBufSize - 1] = 'x';
+    }
+    
+    private static CharArrayReader car = new CharArrayReader(src);
+
+    public static void example(String... args) {
+        try {
+            BufferedReader br = new BufferedReader(car);
+
+            Class<? extends BufferedReader> c = br.getClass();
+            Field f = c.getDeclaredField("cb");
+            
+            f.setAccessible(true);
+            char[] cbVal = char[].class.cast(f.get(br));
+
+            char[] newVal = Arrays.copyOf(cbVal, cbVal.length * 2);
+            if (args.length > 0 && args[0].equals("grow"))
+                f.set(br, newVal);
+
+            for (int i = 0; i < srcBufSize; i++) {
+                br.read();
+            }
+            
+            // 查看是否使用的是新的数组
+            if (newVal[srcBufSize - 1] == src[srcBufSize - 1])
+                System.out.printf("Using new backing array, size = %d%n", newVal.length);
+            else
+                System.out.printf("Using original backing array, size = %d%n", cbVal.length);
+        } catch (NoSuchFieldException | IllegalAccessException | IOException e) {
+            e.printStackTrace();
+        }
+    }
+    
+    public static void main(String[] args) {
+        example("grow");
+        example();
+    }
+}
+```
+
+```
+Expect output:
+Using new backing array, size = 16384
+Using original backing array, size = 8192
+```
+
+> Accessing Elements of a Multidimensional Array
+
+多维数组其实就是简单的嵌套数组，比如说二维数组就是数组的数组，三维数组是二维数组的数组，以此类推。
+
+下面的例子展示了如何通过反射 API 创建和初始化多维数组：
+
+```java
+public class CreateMatrix {
+
+    public static void main(String[] args) {
+        Object matrix = Array.newInstance(int.class, 2, 2);
+        Object row0 = Array.get(matrix, 0);
+        Object row1 = Array.get(matrix, 1);
+
+        Array.setInt(row0, 0, 1);
+        Array.setInt(row0, 1, 2);
+        Array.setInt(row1, 0, 3);
+        Array.setInt(row1, 1, 4);
+
+        for (int i = 0; i < 2; i++) {
+            for (int j = 0; j < 2; j++) {
+                System.out.printf("matrix[%d][%d] = %d%n", i, j, ((int[][]) matrix)[i][j]);
+            }
+        }
+    }
+}
+```
+
+```
+Expect Output:
+matrix[0][0] = 1
+matrix[0][1] = 2
+matrix[1][0] = 3
+matrix[1][1] = 4
+```
+
+拥有可变参数的方法 `Array.newInstance(Class<?> componentType, int... dimensions)` 提供了创建多维数组的方式。但是组件仍然需要使用多维数组是嵌套数组的原则进行初始化（注意反射 API 并不提供多维数组的 get/set 方法）。
+
+### Enumerated Types
+
+在反射代码中操作枚举其实和操作普通类一样。`Class.isEnum()` 判断某个 Class 是否是枚举类型。`Class.getEnumConstants()` 则检索定义在 enum 中的常量。`java.lang.reflect.Field.isEnumConstant()` 方法则判断类成员是否是枚举类型。
+
+#### （1）Examining Enums
+
+演示检索枚举类型的常量及其他字段、构造器、方法。
+
+反射提供了以下几个方法：
+
+- `Class.isEnum()`：判断 class 是否是枚举类型；
+- `Class.getEnumConstants()`：按照常量在枚举中定义的顺序检索；
+- `java.lang.reflect.Field.isEnumConstant()`：判断字段是否是枚举元素类型。
+
+有时候需要去动态检索枚举常量；在非反射代码中可以调用编译器隐式生成的 `values()` 方法获取所有常量。
+
+```java
+public class EnumConstants {
+    
+    enum Eon {
+        HADEAN, ARCHAEAN, PROTEROZOIC, PHANEROZOIC
+    }
+    
+    public static void retrieve(String... args) {
+        try {
+            Class<?> c = args.length == 0 ? Eon.class : Class.forName(args[0]);
+            System.out.printf("Enum name: %s%nEnum constants: %s%n", c.getName(), Arrays.asList(c.getEnumConstants()));
+            if (c == Eon.class)
+                System.out.printf("  Eon.values(): %s%n", Arrays.asList(Eon.values()));
+        } catch (ClassNotFoundException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public static void main(String[] args) {
+        retrieve("java.lang.annotation.RetentionPolicy");
+        System.out.println();
+        retrieve("java.util.concurrent.TimeUnit");
+        System.out.println();
+        retrieve();
+    }
+}
+```
+
+```
+Enum name: java.lang.annotation.RetentionPolicy
+Enum constants: [SOURCE, CLASS, RUNTIME]
+
+Enum name: java.util.concurrent.TimeUnit
+Enum constants: [NANOSECONDS, MICROSECONDS, MILLISECONDS, SECONDS, MINUTES, HOURS, DAYS]
+
+Enum name: io.naivekyo.array_enum.EnumConstants$Eon
+Enum constants: [HADEAN, ARCHAEAN, PROTEROZOIC, PHANEROZOIC]
+  Eon.values(): [HADEAN, ARCHAEAN, PROTEROZOIC, PHANEROZOIC]
+```
+
+因为枚举也是 Class，所以可以通过其他反射 API 获取相应的信息，比如 Field、Method、Constructor。
+
+```java
+public class EnumSpy {
+    
+    private static final String fmt = "  %11s: %s %s%n";
+    
+    public static void spy(String... args) {
+        try {
+            Class<?> c = Class.forName(args[0]);
+            if (!c.isEnum()) {
+                System.out.printf("%s is not an enum type%n", c);
+                return;
+            }
+            System.out.printf("Class: %s%n", c);
+
+            Field[] flds = c.getDeclaredFields();
+            List<Field> cst = new ArrayList<>();    // enum constants
+            List<Field> mbr = new ArrayList<>();    // member fields
+            for (Field f : flds) {
+                if (f.isEnumConstant())
+                    cst.add(f);
+                else 
+                    mbr.add(f);
+            }
+            if (!cst.isEmpty())
+                print(cst, "Constant");
+            if (!mbr.isEmpty())
+                print(mbr, "Field");
+
+            Constructor<?>[] ctors = c.getDeclaredConstructors();
+            for (Constructor<?> ctor : ctors) {
+                System.out.printf(fmt, "Constructor", ctor.toGenericString(), synthetic(ctor));
+            }
+
+            Method[] mths = c.getDeclaredMethods();
+            for (Method m : mths) {
+                System.out.printf(fmt, "Method", m.toGenericString(), synthetic(m));
+            }
+        } catch (ClassNotFoundException e) {
+            e.printStackTrace();
+        }
+    }
+    
+    private static void print(List<Field> lst, String s) {
+        for (Field f : lst) {
+            System.out.printf(fmt, s, f.toGenericString(), synthetic(f));
+        }
+    }
+    
+    private static String synthetic(Member m) {
+        return (m.isSynthetic() ? "[ synthetic ]" : "");
+    }
+
+    public static void main(String[] args) {
+        spy("java.lang.annotation.RetentionPolicy");
+    }
+}
+```
+
+```
+Expect output:
+Class: class java.lang.annotation.RetentionPolicy
+     Constant: public static final java.lang.annotation.RetentionPolicy java.lang.annotation.RetentionPolicy.SOURCE 
+     Constant: public static final java.lang.annotation.RetentionPolicy java.lang.annotation.RetentionPolicy.CLASS 
+     Constant: public static final java.lang.annotation.RetentionPolicy java.lang.annotation.RetentionPolicy.RUNTIME 
+        Field: private static final java.lang.annotation.RetentionPolicy[] java.lang.annotation.RetentionPolicy.$VALUES [ synthetic ]
+  Constructor: private java.lang.annotation.RetentionPolicy() 
+       Method: public static java.lang.annotation.RetentionPolicy[] java.lang.annotation.RetentionPolicy.values() 
+       Method: public static java.lang.annotation.RetentionPolicy java.lang.annotation.RetentionPolicy.valueOf(java.lang.String) 
+```
+
+注意：出于各种原因，包括对枚举类型的支持，枚举常量在枚举中定义的顺序非常重要。`Class.getFields()`、`Class.getDeclaredFields()` 则不保证获取的数据信息和在原有类中定义的顺序一致，如果程序对顺序有要求，则可以使用 `Class.getEnumConstants()`。
+
+#### （2）Getting/Setting Fields with Enum Types
+
+类中存储枚举的成员是引用类型，可以使用 `Field.set()` 和 `Field.get() `方法。
+
+```java
+public class SetTrace {
+    
+    enum TraceLevel { OFF, LOW, MEDIUM, HIGH, DEBUG }
+    
+    static class MyServer {
+        private TraceLevel level = TraceLevel.OFF;
+    }
+    
+    public static void example(String... args) {
+        TraceLevel newLevel = TraceLevel.valueOf(args[0]);
+        
+        try {
+            MyServer svr = new MyServer();
+            Class<? extends MyServer> c = svr.getClass();
+            Field f = c.getDeclaredField("level");
+            f.setAccessible(true);
+            TraceLevel oldLevel = (TraceLevel) f.get(svr);
+            System.out.printf("Original trace level: %s%n", oldLevel);
+            
+            if (oldLevel != newLevel) {
+                f.set(svr, newLevel);
+                System.out.printf("  New trace level: %s%n", f.get(svr));
+            }
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public static void main(String[] args) {
+        example("OFF");
+        example("DEBUG");
+    }
+}
+```
+
+```
+Expect output:
+// case1
+Original trace level: OFF
+
+// case2
+Original trace level: OFF
+  New trace level: DEBUG
+```
+
