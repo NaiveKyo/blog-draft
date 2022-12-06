@@ -315,6 +315,10 @@ static class TestContainerAnnotation {
 
 # 三、反射
 
+参考：
+
+https://docs.oracle.com/javase/8/docs/technotes/guides/reflection/index.html
+
 ## 1、概念
 
 Java 的 Reflection API 允许在代码中获取被加载类的字段、方法、构造器的信息，在安全范围内操作这些信息，甚至获得完全控制权。
@@ -2349,4 +2353,76 @@ Original trace level: OFF
 Original trace level: OFF
   New trace level: DEBUG
 ```
+
+
+
+# 四、动态代理类
+
+参考：
+
+- https://docs.oracle.com/javase/8/docs/technotes/guides/reflection/proxy.html
+
+## 1、简介
+
+动态代理类是指在运行时实现指定的接口列表的类，通过调用该类的实例上的某个方法（该方法来自某个接口）将该实例编码并通过统一接口分派给另外一个对象。
+
+因此，可以使用动态代理类为一组接口创建类型安全的代理对象，而不需要像使用编译时工具那样预先生成代理类。
+
+动态代理类实例方法的调用动作将会分派给实例的 invocation handler 的某个方法（该方法使用 `java.lang.reflect.Method` 对象封装并通过一个数组类型的 Object 传递参数列表）。
+
+在应用程序或者类库中如果需要为某个特定的接口 API 使用类型安全的反射调度处理，此时动态代理类将会非常有用。
+
+比如说，在应用程序中可以使用动态代理类去创建一个实现任意事件监听接口的对象（这种接口可以实现 `java.util.EventListener`），这样就可以通过统一的方式去处理不同类型的事件，比如将此类事件记录到同一个文件中。
+
+## 2、Dynamic Proxy Class API
+
+有三个概念：
+
+- 动态代理类（下面简称代理类）是这样的：在运行时被创建的时候实现某个接口；
+- 代理接口：被代理类实现的接口；
+- 代理对象：代理类的实例。
+
+### Creating a Proxy Class
+
+通过 `java.lang.reflect.Proxy` 类提供的一些静态方法去创建代理类的实例。
+
+`Proxy.getProxyClass()` 方法通过类加载器和指定接口就可以获取代理类的 `java.lang.Class` 对象。代理类将在指定的类加载器中定义并实现所有提供的接口，如果目标代理类已经存在，则返回已存在的代理类，否则将通过类加载器动态生成代理类。
+
+下面是 `Proxy.getProxyClass()` 方法所需参数的一些限制：
+
+- 提供的所有接口的 Class 对象都必须是已经存在的接口，不能是类或者原始类型；
+- 接口数组中不能存在两个同时引用一个 Class 对象的引用；
+- 提供的类加载器必须可以访问提供的接口列表（访问权限问题）；
+- 所有非 public 的接口必须在同一个 package 下，否则代理类就不能实现所有接口；
+- 这些接口中的方法需要具有以下特点：
+  - 如果有方法返回的是基础数据类型或者 Void，那么所有接口方法必须返回同样的类型；
+  - 否则的话，其中一个方法的返回类型必须可以赋给其他方法返回的类型（相当于继承中的父类和子类的关系）。
+- 生成的代理类必须符合 JVM 对常规类的限制：比如 JVM 限制类最多能实现 65535 个接口。
+
+如果违反了上述任何一条规则，`Proxy.getProxyClass()` 方法将会抛出 IllegalArgumentException。如果接口 Class 数组中存在 null，就会抛出空指针异常。
+
+需要注意的是：指定的代理接口的顺序非常重要，具有相同的接口组合但是顺序不同，将会产生两个代理类，代理类将会根据其代理接口的顺序进行区分。
+
+这样就不用每次调用 getProxyClass 方法就要重新生成一个代理类，实现代理类的 API 将会维持一个缓存用于存储已经生成的代理类（类似 key-value，只不过 key 是对应的类加载器和接口列表顺序），同时注意实现不能引用类加载器、接口和代理类，以免类加载器及所有类在适当的时候被垃圾回收。
+
+### Proxy Class Properties
+
+一个代理类具有以下属性：
+
+- 代理类的修饰符是 `public final` 的，不能是 `abstract`；
+- 代理类的非限定名称没有指明，只是通过 `"$Proxy"` 表示这是一个 JDK 动态生成的代理类；
+- 代理类都继承自 `java.lang.reflect.Proxy`；
+- 代理类按照接口组合的顺序去实现接口中的方法；
+- 如果代理类实现了一个非 public 类型的接口，那么该代理类将被定义在和该接口相同的 package 下。否则的话，代理类的包也是没有指定的，注意 package sealing 不会阻止代理类在运行时在特定的包中成功创建，也不会阻止已经在相同的类加载器和具有特定签名的相同包中定义的类。
+- 代理类在被创建的时候就实现了所有相关的接口，调用代理类的 Class 对象的 getInterfaces 方法将会返回一个接口数组（数组元素的顺序和代理类声明时指定的接口顺序一致）。调用 Class 对象的 getMethods 将会返回 Method 对象数组，其中包含实现接口中的所有方法，其他的反射 API 和正常的类效果一样；
+- 如果目标 Class 对象是代理类（通过 `Proxy.getProxyClass` 或者 `Proxy.newProxyInstance` 方法生成的实例的 Class 对象），那么调用 `Proxy.isProxyClass()` 方法会返回 true，否则返回 false，在进行某些安全操作时通过此方法去判断是否是代理类是非常重要的，可以防止运行时恶意生成的代理类对象进行某些操作；
+- 代理类的 `java.security.ProtectionDomain` 和通过 bootstrap class loader 加载的系统类一样，比如 `java.lang.Object`，因为生成代理类的代码是可以信任的系统代码。拥有这种 ProtectionDomain 的将会被授予 `java.security.AllPermission`（也就是所有权限）。
+
+### Creating a Proxy Instance
+
+所有的代理类都拥有一个 public 类型的只拥有一个参数的构造器，这个参数就是接口 `InvocationHandler` 的实现。
+
+每个代理类实例都关联一个 invocation handler 对象，这个对象将会传递给代理类的构造器。如果不想使用反射 API 获取代理类的 public 构造器，则可以使用 `Proxy.newProxyInstance` 方法去创建代理类实例，这个方法组合了两个操作：将 invocation handler 对象传递给代理类的构造方法，然后调用 `Proxy.getProxyClass` 去调用代理类的构造方法生成实例。
+
+`Proxy.newProxyInstance` 抛出 IllegalArgumentException 的原因和 `Proxy.getProxyClass` 方法一样。
 
