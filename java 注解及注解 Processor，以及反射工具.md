@@ -2426,3 +2426,111 @@ Original trace level: OFF
 
 `Proxy.newProxyInstance` 抛出 IllegalArgumentException 的原因和 `Proxy.getProxyClass` 方法一样。
 
+### Proxy Instance Properties
+
+代理实例有下列属性：
+
+- 如果有一个代理类实例 proxy，以及一个代理类实现的接口类型 Foo
+
+该表达式返回 true：`proxy instanceof Foo`；
+
+该转型操作是可行的，并且不会抛出 ClassCastException：`(Foo) proxy`;
+
+- 静态方法 `Proxy.getInvocationHandler` 接收一个代理类实例并返回和该代理类关联的 invocation handler 实例；
+- 调用代理类实例实现的某个接口的方法，该方法会被包装为 Method 对象（该 Method 的声明类是所属接口）然后作为参数传递给和该代理类关联的 invocation handler 实例的 `invoke()` 方法，更多信息请参见该方法的声明；
+- 调用代理类继承自 `java.lang.Object` 中的 hashCode、equals 或者 toString 方法，具体处理流程和上一步一样，都需要传递给 InvocationHandler 实例的 invoke 方法（Method 对象的声明类是 Object.class）。同时要注意其他继承自 Object 的 public 方法不会被重写。
+
+### 多个代理接口都有的方法
+
+（1）如果代理类实现的接口中，存在两个或更多的相同的方法（名称和参数一致），那么代理类实现接口时声明的顺序就非常重要了，如果调用该重复的方法，则传递给 InvocationHandler 实例的 Method 对象的声明类将是代理类实现接口中的最前面的接口；
+
+（2）如果代理类实现的接口中有和 `java.lang.Object` 中 public、非 final 的方法一样的方法，那么调用该方法时，传递给 invoke 方法的 Method 对象的声明类是 Object.class，它位于所有其他接口之前；
+
+（3）最后需要注意的一点是重复方法传递给 invoke 方法后，invoke 方法抛出的异常只会是所有可以调用该方法的代理接口中的异常类型中的 checked exception。而如果 invoke 方法抛出的异常不属于代理类实现所有接口中的方法声明的异常类型，那么 invoke 会将其包装为 `UndeclaredThrowableException`。
+
+## 3、Serialization
+
+因为 `java.lang.reflect.Proxy` 类实现了 `java.io.Serializabel`，所以代理类的实例也是可以被序列化的。
+
+如果一个代理实例中关联的 InvocationHandler 实例没有实现 `java.io.Serializable` 接口，那么当该代理实例通过 `java.io.ObjectOutputStream` 进行序列化时就会抛出 `java.io.NotSerializableException`。
+
+注意，对于代理类，实现 `java.io.Externalizable` （该接口继承自 Serializable 接口）在序列化方面的效果和实现 `java.io.Serializable` 接口效果是相同的：在序列化的过程中 proxy 实例或者 invocation handler 实例永远不会调用 Externalizable 接口的 writeExternal 和 readExternal 方法。和其他 Class 对象一样，代理类也是可以序列化的。
+
+注意：代理类没有可供序列化的字段，且 serialVersionUID 也是 0L。换句话说，当代理类实例的 Class 对象被传递给 `java.io.ObjectStreamClass` 的静态方法 `lookup` 时，方法返回的 `ObjectStreamClass` 实例会具有以下属性：
+
+- 调用 `getSerialVersionUID` 方法返回 0L；
+- 调用 `getFields` 方法返回的数组长度为 0；
+- 调用 `getField` 方法并传递字符串参数，最终返回 null。
+
+对象序列化的流协议支持这样的类型代码：TC_PROXYCLASSDESC，这个代码流格式语法中的终止语法，它的类型和值在 `java.io.ObjectStreamConstants` 接口中定义。
+
+更多关于代理实例序列化的信息请参考：https://docs.oracle.com/javase/8/docs/technotes/guides/reflection/proxy.html
+
+## 4、Example
+
+下面展示了如何构造动态代理类实现多个接口，代理接口中的方法并在方法调用前后做一些操作：
+
+目标接口和目标类：
+
+```java
+public interface Foo {
+    Object bar(Object obj) throws IllegalArgumentException;
+}
+```
+
+```java
+public class FooImpl implements Foo {
+    @Override
+    public Object bar(Object obj) throws IllegalArgumentException {
+        // ...
+        return null;
+    }
+}
+```
+
+代理类的 InvocationHandler：
+
+```java
+public class DebugProxy implements InvocationHandler {
+    
+    private Object obj;
+    
+    public static Object newInstance(Object obj) {
+        return Proxy.newProxyInstance(obj.getClass().getClassLoader(), obj.getClass().getInterfaces(), new DebugProxy(obj));
+    }
+
+    private DebugProxy(Object obj) {
+        this.obj = obj;
+    }
+
+
+    @Override
+    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+        Object result;
+        try {
+            System.out.println("before method " + method.getName());
+            result = method.invoke(obj, args);
+        } catch (InvocationTargetException e) {
+            throw e.getTargetException();
+        } catch (Exception e) {
+            throw new RuntimeException("unexpected invocation exception: " + e.getMessage());
+        } finally {
+            System.out.println("after method " + method.getName());
+        }
+        
+        return result;
+    }
+}
+```
+
+下面演示如何通过 InvocationHandler 创建代理类实例，并且调用代理方法：
+
+```java
+public class MainTest {
+    public static void main(String[] args) {
+        Foo foo = (Foo) DebugProxy.newInstance(new FooImpl());
+        foo.bar(null);
+    }
+}
+```
+
