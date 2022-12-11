@@ -1,3 +1,20 @@
+---
+title: Java Relearn Reflection And Dynamic Proxy
+author: NaiveKyo
+top: false
+hide: false
+img: 'https://cdn.jsdelivr.net/gh/NaiveKyo/CDN/img/20220425110606.jpg'
+coverImg: /img/20220425110606.jpg
+cover: false
+toc: true
+mathjax: false
+date: 2022-12-07 23:55:40
+summary: "重新学习 Java 反射 API 及动态代理"
+categories: "Java"
+keywords: "Java"
+tags: "Java"
+---
+
 # 一、简介
 
 参考：
@@ -2530,7 +2547,15 @@ public class MainTest {
     public static void main(String[] args) {
         Foo foo = (Foo) DebugProxy.newInstance(new FooImpl());
         foo.bar(null);
+        System.out.println(foo.getClass());
     }
 }
+```
+
+```
+Expect output:
+before method bar
+after method bar
+class com.sun.proxy.$Proxy0
 ```
 
