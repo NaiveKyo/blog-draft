@@ -23,7 +23,7 @@ website：https://kafka.apache.org/
 
 ## What is event streaming?
 
-Event streaming 就类型人体的中央神经处理系统。
+Event streaming 类似于人体的中央神经处理系统。
 
 从技术角度看，Event streaming 就是以事件流的形式实时地从数据源中捕获数据的一种实践。
 
