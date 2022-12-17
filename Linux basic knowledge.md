@@ -1,3 +1,20 @@
+---
+title: Linux Basic Knowledge Review (一)
+author: NaiveKyo
+top: false
+hide: false
+img: 'https://cdn.jsdelivr.net/gh/NaiveKyo/CDN/img/20220425110644.jpg'
+coverImg: /img/20220425110644.jpg
+cover: false
+toc: true
+mathjax: false
+date: 2022-12-17 23:44:30
+summary: "Linux 基础知识回顾 (一)"
+categories: "Linux"
+keywords: "Linux"
+tags: "Linux"
+---
+
 # 参考
 
 - 书籍：鸟哥的 Linux 私房菜：基础学习篇（第四版）
