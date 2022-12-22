@@ -15,7 +15,11 @@
 
 更多详细特性和配置请参考 Github 上的说明；
 
-# Preparation
+# 
+
+# CMAK（Kafka Manager）
+
+CMKA（Cluster Manager for Apache Kafka）之前也叫做 Kafka Manager
 
 ## 替换  yum 镜像
 
@@ -117,7 +121,6 @@ downloading https://repo1.maven.org/maven2/org/scala-sbt/sbt/1.2.8/sbt-1.2.8.jar
         [SUCCESSFUL ] org.scala-sbt#sbt;1.2.8!sbt.jar (3051ms)
 downloading https://repo1.maven.org/maven2/org/scala-lang/scala-library/2.12.7/scala-library-2.12.7.jar ...
 # long long time ...
-
 ```
 
 这里要等待很长时间，包括下载各种 jar 包以及更新项目引用。
