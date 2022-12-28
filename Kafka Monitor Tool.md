@@ -93,7 +93,9 @@ sbt script version: 1.8.0
 
 ## Complie CMAK
 
-使用 CMAK（Cluster Manager Of Apache Kafka，以前叫做 Kafka Manager）2.0.0.2 需要有一下环境：
+<font color='red'>最后没有编译成功，所以暂时不推荐使用该监控工具。</font>
+
+使用 CMAK（Cluster Manager Of Apache Kafka，以前叫做 Kafka Manager）2.0.0.2 需要有以下环境：
 
 - Java 8+；
 - [sbt](https://www.scala-sbt.org/)：a build tool for Scala, Java, and [more](https://github.com/d40cht/sbt-cpp). It requires Java 1.8 or later.
