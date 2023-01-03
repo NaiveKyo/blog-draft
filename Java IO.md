@@ -85,6 +85,8 @@ public class UseCase1ByteStreams {
 
 ### Character Streams
 
+Character Streams 主要处理字符数据的 I/O，自动将 Unicode 字符数据和本地字符集之间进行转换。
+
 Java 平台使用 Unicode 编码格式来存储字符值，Character Stream I/O 自动将这种内部格式和本地字符集进行互相转换。在西方地区，本地字符集通常是 ASCII 码的 8-bit 超集。（在中国本地字符集一般就是 UTF-8 了）
 
 对于大多数应用程序而言，使用字符流进行 I/O 并不比使用字节流 I/O 复杂，字符流将 Unicode 字符转换为本地字符集，使用字符流代替字节流的程序可以自动适应本地字符集，并为国际化做好准备 —— 所有这些都不需要开发者关心。
@@ -157,6 +159,8 @@ public static void main(String[] args) throws IOException {
 
 ### Buffered Streams
 
+Buffered Streams 通过减少 native API 的调用来优化输入和输出。
+
 到目前为止，我们使用的大多数是无缓冲 I/O，这意味着每个读或写的请求都由底层操作系统直接处理，此时程序的处理效率十分低下，因为每个这样的请求通常都会触发磁盘访问、网络活动或其他一些相对昂贵的操作。
 
 为了减少这种开销，Java 平台实现了缓冲的 I/O 流。
@@ -186,6 +190,8 @@ pw = new PrintWriter(new FileWriter("target.txt"));
 想要手动刷新流，只需要调用 `flush` 方法，对任何输出流都是有效的，但是如果是没有使用缓冲区的输出流调用该方法则不会造成任何影响。
 
 ### Scanning and Formatting
+
+允许程序以某种格式读取和写入文本。
 
 在编程的时候通常会将数据流转换为人们易于阅读的形式，为了支持这些功能，Java 提供了两个 API：
 
@@ -364,10 +370,174 @@ public class UseCase4Console {
 
 ### Data Streams
 
+Data Streams 处理原始数据类型和字符串的二进制数据 I/O。
+
+原始数据类型：boolean、char、byte、short、int、long、float、double；
+
+所有的 Data Streams 都实现了 `java.io.DataInput` 或者 `java.io.DataOutput` 接口。本小节重点介绍数据流中使用较为广泛的 `DataInputStream` 和 `DataOutputStream`。
+
+看下面的例子：
+
+```java
+public class UseCase5DataStreams {
+    
+    static final String dataFile = "invoicedata";
+    
+    static final double[] prices = { 19.99, 9.99, 15.99, 3.99, 4.99 };
+    
+    static final int[] units = { 12, 8, 13, 29, 50 };
+    
+    static final String[] descs = {
+            "Java T-shirt",
+            "Java Mug",
+            "Duke Juggling Dolls",
+            "Java Pin",
+            "Java Key Chain"
+    };
+    
+    public static void main(String[] args) throws IOException {
+
+        // 将数据写入到文件
+        DataOutputStream out = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(dataFile)));
+
+        for (int i = 0; i < prices.length; i++) {
+            out.writeDouble(prices[i]);
+            out.writeInt(units[i]);
+            out.writeUTF(descs[i]);
+        }
+
+        out.close();
+        
+        // 从文件中读取数据
+        DataInputStream in = new DataInputStream(new BufferedInputStream(new FileInputStream(dataFile)));
+
+        double price;
+        int unit;
+        String desc;
+        double total = 0.0;
+
+        try {
+            while (true) {
+                price = in.readDouble();
+                unit = in.readInt();
+                desc = in.readUTF();
+                System.out.format("You ordered: %d units of %s at $%.2f%n", unit, desc, price);
+                total += unit * price;
+            }
+        } catch (EOFException e) {
+        }
+        
+        in.close();
+
+        System.out.println("total: " + total);
+    }
+}
+```
+
+这里使用数据流将数据写入到文件，然后从文件中读取数据，有几个点需要注意：
+
+- 创建数据流的方式依旧还是熟悉的装饰器；
+- 用完流记得及时 close 释放系统资源；
+- `writeUTF()` 方法将字符串以 UTF-8 格式写入到文件，UTF-8 是一种可变宽度的字符串，对于常见的英文字符，只需一个字节即可存储（汉字需要 3 个字节，具体可以网上查阅 unicode、utf 等等编码的特性和历史原因）；
+- 数据流通过捕获 `EOFException` 来检测文件是否读取结束，而不是返回无效值。DataInput 方法的所有实现都使用 EOFException 而不是返回值；
+- 还需要注意，DataStreams 中的每个 write 操作都有专门的 read 操作一一对应，因此我们写入什么类型的数据就要使用对应的方法读取；
+- DataStreams 使用了一种非常糟糕的编程技术：它使用浮点数表示货币值，一般来说，浮点数不利于精确的值。
+  - 对于货币值的正确类型是 `java.math.BigDecimal`，不幸的是，BigDecimal 是一种对象类型，因此它不能使用 DataStreams，相应的它需要使用 Object Streams。
+
+### Object Streams
+
+处理对象的二进制数据 I/O；
+
+如果说 Data Streams 支持的是原始数据类型的 I/O 流操作，那么 Object Streams 支持的就是对象的 I/O 流操作了。同时大多数（但不是全部）的标准类都支持对象的序列化操作，支持序列化的类实现了 `Serializable` 接口。
+
+一般我们说的对象流是 `ObjectInputStream` 和 `ObjectOutputStream`，这些类实现了 `ObjectInput` 和 `ObjectOutput` 接口，这两个接口又继承自 `DataInput` 和 `DataOutput` 接口，这意味这 DataStreams 中涵盖的所有基本数据的 I/O 方法在 ObjectStreams 中也会实现。因此，对象流可以包含原始数据类型和对象类型的混合。
+
+需要注意的是对象流的 readObject 方法返回的值是 Object 类型，有时候我们需要做运行时类型转换，注意可能发生的类型转换异常（ClassNotFoundException）；
+
+> 复杂对象的 Input 和 Output
+
+对象流接口提供的 `writeObject` 和 `readObject` 方法非常容易使用，但是它们内部包含了一些非常复杂的对象管理逻辑。这对于像 `Calendar` 这样的类并不重要，因为它内部只是封装了原始数据类型的值，但是许多对象包含了其他对象的引用。如果 readObject 方法要从流中重构对象，它必须能够重构原始对象引用的所有对象。这些附加对象内部也可能有对其他对象的引用，以此类推。这种情况下，writeObject 会遍历整个对象引用网络，并将该网络中的所有对象写入流（这里的网络指的是对象引用关系构成的图）。因此，调用一次 writeObject 方法可能会导致大量对象写入流。
+
+注意存在这样一种情况：同一个对象流中的两个对象 a 和 b 都持有对另一个对象 c 的引用，当 a 和 b 被读取时，引用的对象 c 是不是还是同一个？答案是会，一个流中只会包含一个对象的一个副本，尽管它可以包含任意数量的引用，因此，如果显式地将一个对象写入流两次，实际上只写入了两次引用。比如下面的代码：
+
+```java
+Object ob = new Object();
+out.writeObject(ob);
+out.writeObject(ob);
+```
+
+每个 writeObject 都必须与一个 readObject 相匹配，所以读取流的代码看起来是这样的：
+
+```java
+Object ob1 = in.readObject();
+Object ob2 = in.readObject();
+```
+
+结果就是会产品两个引用变量：ob1 和 ob2，但是它们都指向同一个对象实例。
+
+但是，如果一个对象被写入两个不同的流，那么就会产生两个重复对象，此时使用一个读取流来读取这两个写入流，就会获得两个对象。
+
+## File I/O（Featuring NIO.2）
+
+`java.nio.file` 包以及其关联的 `java.nio.file.attribute` 包为文件 I/O 和访问默认文件系统提供了全面的支持。尽管这些 API 涉及到很多类，但我们只需要关注几个入口点就可以了，其实这些 API 是非常方便使用的。
+
+首先我们需要知道什么是 Path，`java.nio.file.Path` 是一个非常重要的 entry point，重点看 path 相关的操作；
+
+然后了解 `java.nio.file.Files`，其中包含了与文件相关的操作方法，会介绍许多文件操作的通用概念，然后了解 checking、deleting、copying and moving files；
+
+最后将学习一些非常强大且更高级的主题：
+
+- 递归遍历文件树功能；
+- 使用通配符搜索文件；
+- 监视目录的更改；
+- 介绍其他的一些不常用的方法。
+
+### What's a Path？
+
+文件系统在某种形式的媒体（通常是一个或多个硬盘驱动器）上存储和组织文件，使得它们易于检索。目前使用的大多数文件系统以树状（或层次结构）结构存储文件。树的顶部是一个（或多个）根节点。在根节点下面是一些文件和目录（Windows 中用问价夹表示目录），每个目录下面又可以有文件或者子目录，依次类推，几乎可以拥有无限的深度。
+
+本小节包含三部分：
+
+- 什么是 Path；
+- 相对路径和绝对路径；
+- 符号链接；
+
+> What Is a Path?
+
+在不同的操作系统中，文件系统的根目录也会存在差异，比如 windows 支持多个根节点，每个根节点使用盘符表示，比如 `C:\` 、`D:\`，而 Linux 或者 Solaris OS 支持单个根节点，即 `/`；
+
+一个文件可以使用它在文件系统中的路径来标识，从根节点开始，比如说 Linux 中某个文件的路径：`/usr/local/share/file1`，换成 Windows 是这样的：`D:\share\file1.txt`，用于分隔目录名的字符（也成为分隔符）在不同的文件系统中都不一样：Linux 使用 `/`，Windows 使用 `\`。
+
+> Relative or Absolute?
+
+路径又分为两种：绝对路径和相对路径。
+
+- 绝对路径中包含根元素和定位文件所需的完整目录列表，比如 `/usr/local/share/file1`；
+- 相对路径需要与另一个路径组合才能访问文件，比如 `joe/foo` 就是一个相对路径，如果没有更多的信息，程序就无法根据该路径准确的定位文件。
+
+> Symbolic Links
+
+文件系统对象中最典型的是目录和文件，但是一些文件系统也支持符号链接的概念，符号链接也被称为软链接（在 Windows 系统中叫做快捷方式）。
+
+符号链接是作为另一个文件引用的特殊文件，在大多数情况下，符号链接对应用程序是透明的，对符号链接的操作会自动重定向到该链接的目标（这个目标可以是文件或者目录）。
+
+符号链接对用户来说也是透明的，像符号链接读取和写入与正常的文件或目录操作没什么区别。
+
+而 `resolving a link` 意思是将符号链接替换为文件系统中实际的位置。
+
+在实际场景中，大多数文件系统都可以随意使用符号链接，但是粗心创建的某些符号链接可能会导致循环引用，当链接的目标指向原始链接时，就会发生循环引用循环引用也可以是间接的，比如：目录 a 指向目录 b，目录 b 指向目录 c，目录 c 包含指向目录 a 的子目录，当程序递归遍历目录结构时，循环引用会造成巨大破坏，幸运的是，这种情况 API 中已经考虑到并处理过了。
+
+### The Path Class
+
+
+
+
+
 进度：
 
 - https://docs.oracle.com/javase/8/javase-books.htm
 - https://docs.oracle.com/javase/8/docs/
 - https://docs.oracle.com/javase/8/docs/technotes/guides/io/index.html
 - https://docs.oracle.com/javase/tutorial/essential/io/index.html
-- https://docs.oracle.com/javase/tutorial/essential/io/datastreams.html
+- https://docs.oracle.com/javase/tutorial/essential/io/pathClass.html
+
