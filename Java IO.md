@@ -477,7 +477,7 @@ Object ob2 = in.readObject();
 
 但是，如果一个对象被写入两个不同的流，那么就会产生两个重复对象，此时使用一个读取流来读取这两个写入流，就会获得两个对象。
 
-## File I/O（Featuring NIO.2）
+# File I/O（Featuring NIO.2）
 
 `java.nio.file` 包以及其关联的 `java.nio.file.attribute` 包为文件 I/O 和访问默认文件系统提供了全面的支持。尽管这些 API 涉及到很多类，但我们只需要关注几个入口点就可以了，其实这些 API 是非常方便使用的。
 
@@ -492,7 +492,7 @@ Object ob2 = in.readObject();
 - 监视目录的更改；
 - 介绍其他的一些不常用的方法。
 
-### What's a Path？
+## What's a Path？
 
 文件系统在某种形式的媒体（通常是一个或多个硬盘驱动器）上存储和组织文件，使得它们易于检索。目前使用的大多数文件系统以树状（或层次结构）结构存储文件。树的顶部是一个（或多个）根节点。在根节点下面是一些文件和目录（Windows 中用问价夹表示目录），每个目录下面又可以有文件或者子目录，依次类推，几乎可以拥有无限的深度。
 
@@ -527,7 +527,210 @@ Object ob2 = in.readObject();
 
 在实际场景中，大多数文件系统都可以随意使用符号链接，但是粗心创建的某些符号链接可能会导致循环引用，当链接的目标指向原始链接时，就会发生循环引用循环引用也可以是间接的，比如：目录 a 指向目录 b，目录 b 指向目录 c，目录 c 包含指向目录 a 的子目录，当程序递归遍历目录结构时，循环引用会造成巨大破坏，幸运的是，这种情况 API 中已经考虑到并处理过了。
 
-### The Path Class
+## The Path Class
+
+从 JDK 7 开始引入了 `java.nio.file.Path` 接口，它是 `java.nio.file` 包的一个主要的 entrypoint，能够为我们进行 File I/O 提供很多强大的功能；
+
+顾名思义，Path 就是文件系统中某个路径在程序中的表示，Path对象包含用于构造路径的文件名和目录列表，并用于检查、定位和操作文件。
+
+有一点需注意，当我们使用 Path 时，无需关心底层操作系统；
+
+### Path Operations
+
+Path 提供了很多方法用于获取 path 相关的信息、访问 path 中的元素、将 path 转换为其他格式的元素、或者提取 path 的一部分、还有匹配 path 路径字符串的方法与删除路径中冗余字符的方法。
+
+#### 创建路径
+
+Path 实例包含用于指定文件或目录位置的信息。
+
+我们可以利用 `java.nio.file.Paths` 工具类的 `get` 方法来创建 Path 实例：
+
+```java
+Path p1 = Paths.get("/tmp/foo");
+Path p2 = Paths.get(args[0]);
+Path p3 = Paths.get(URI.create("file:///Users/joe/FileTest.java"));
+```
+
+URI 的创建方法参数可以参考源码中提供的格式，涉及到一些 RFC。
+
+`Paths.get` 方法其实是下面代码的简写：
+
+```java
+Path p4 = FileSystems.getDefault().getPath("/users/sally");
+```
+
+假设用户的家目录是 `/home/nk` 或者 `C:\users\nk`，我们可以这样获取家目录下的某个文件，比如：`/home/nk/logs/foo.log`
+
+```java
+Path p5 = Paths.get(System.getProperty("user.home"), "logs", "foo.log");
+```
+
+#### 获取 Path 的信息
+
+我们可以将 Path 看作某些元素 name 的序列，它们按照一定的顺序排列，拥有各自的下标，目录结构中最高级的元素下标是 0，最低级的元素下标是 n-1，n 就是 Path 中元素的 name 的总和，Path 中的方法可以使用这些索引下标来获取指定元素或子序列的信息。
+
+```java
+Path p6 = Paths.get(System.getProperty("user.dir"), "test.log");
+
+System.out.printf("toString: %s%n", p6.toString());
+System.out.printf("getFileName: %s%n", p6.getFileName());
+System.out.printf("getName(0): %s%n", p6.getName(0));
+System.out.printf("getNameCount: %d%n", p6.getNameCount());
+System.out.printf("subpath(0, 2): %s%n", p6.subpath(0, 2));
+System.out.printf("getParent: %s%n", p6.getParent());
+System.out.printf("getRoot: %s%n", p6.getRoot()
+```
+
+Windows 下的输出：
+
+```
+toString: E:\IDEA Java SE Codeing\Java IO Learning\test.log
+getFileName: test.log
+getName(0): IDEA Java SE Codeing
+getNameCount: 3
+subpath(0, 2): IDEA Java SE Codeing\Java IO Learning
+getParent: E:\IDEA Java SE Codeing\Java IO Learning
+getRoot: E:\
+```
+
+注意上面的例子中使用的是绝对路径，也可以使用相对路径；
+
+#### 移除 Path 中的冗余信息
+
+一些文件系统使用 `.` 表示当前目录，使用 `..` 表示父目录，我们可能会遇到这样的情况: Path包含冗余目录信息，比如说某个服务的日志存储目录是这样的 `/dir/logs/.`，我们也会想删掉最后的 `.`：
+
+下面两个例子都是含有冗余信息：
+
+- `/home/./joe/foo`；
+- `/home/sally/../joe/foo`；
+
+使用 `java.nio.file.Path#normalize` 方法即可清理冗余的信息，但是需要注意该方法并不会检查文件系统，它只是一个纯粹的语法操作。
+
+如果想要在清除路径的同时确保结果能够定位正确的文件，可以使用 `toRealPath` 方法。
+
+#### 转换 Path
+
+可以使用三种方法来转换 Path：
+
+将 path 转换为 string 并且可以通过浏览器打开，可以这样：
+
+```java
+Path p6 = Paths.get(System.getProperty("user.dir"), "test.log");
+System.out.printf("%s%n", p6.toUri());
+```
+
+`toAbsolutePath` 方法可以输出目标的完整路径，即使文件不存在也会输出：
+
+```java
+Path path = Paths.get(System.getProperty("user.dir"), "test.log");
+System.out.println(path.toAbsolutePath());
+```
+
+`toRealPath` 方法要求文件必须是实际存在的，该方法会返回一个真实的 path：
+
+```java
+try {
+    Path fp = path.toRealPath();
+    System.out.println(fp);
+} catch (IOException e) {
+    e.printStackTrace();
+}
+```
+
+该方法将一下三个操作合并为一个：
+
+- 如果 toRealPath 接收了参数且文件系统支持符号链接，则该方法会解析符号链接；
+- 如果 Path 是相对路径，该方法会返回绝对路径；
+- 如果 Path 包含了冗余字符，该方法会移除冗余信息；
+
+#### 合并两个 Path
+
+使用 `resolve` 合并 Path。
+
+```java
+// Solaris
+Path p1 = Paths.get("/home/joe/foo");
+// Result is /home/joe/foo/bar
+System.out.format("%s%n", p1.resolve("bar"));
+
+or
+
+// Microsoft Windows
+Path p1 = Paths.get("C:\\home\\joe\\foo");
+// Result is C:\home\joe\foo\bar
+System.out.format("%s%n", p1.resolve("bar"));
+```
+
+#### 创建关联两个 Path 的 Path
+
+在编写文件 I/O 的时候，一个常见的需求是构建一个 Path：从一个 Path 到另一个 Path，此时可以使用 `relativize` 方法，该方法从原始路径构造一个路径，并在传入路径指定的位置结束，新路径相是对于原路径的。
+
+比如，我们有两个相对路径：
+
+```java
+Path p1 = Paths.get("joe");
+Path p2 = Paths.get("sally");
+```
+
+在没有其他信息的情况下，假设 joe 和 sally 的相邻的，意味着它们在文件树结构中属于同一层次，从 joe 到 sally，我们可以从 joe 追溯到上层父节点，然后从父节点向下找到 sally，可以使用这样的代码：
+
+```java
+// Result is ../sally
+Path p1_to_p2 = p1.relativize(p2);
+// Result is ../joe
+Path p2_to_p1 = p2.relativize(p1);
+```
+
+考虑一个复杂点的例子：
+
+```java
+Path p1 = Paths.get("home");
+Path p3 = Paths.get("home/sally/bar");
+// Result is sally/bar
+Path p1_to_p3 = p1.relativize(p3);
+// Result is ../..
+Path p3_to_p1 = p3.relativize(p1);
+```
+
+这个例子中，两个 Path 共享一个节点：home。
+
+#### 比较两个 Path
+
+Path 类型的实例也支持 `equals()` 方法，允许您测试两条路径是否相等，`startsWith` 和 `endsWith` 可以检测路径是否以特定字符串开始或者结束，比如下面这样：
+
+```java
+Path path = ...;
+Path otherPath = ...;
+Path beginning = Paths.get("/home");
+Path ending = Paths.get("foo");
+
+if (path.equals(otherPath)) {
+    // equality logic here
+} else if (path.startsWith(beginning)) {
+    // path begins with "/home"
+} else if (path.endsWith(ending)) {
+    // path ends with "foo"
+}
+```
+
+Path 接口实现了 `java.lang.Iterable`，意味着 path 是可以遍历的，开发者可以遍历 path 中所有 name 元素，返回的第一个元素是在目录树中最接近根的元素。下面的代码段遍历一个路径，打印每个name元素:
+
+```java
+Path path = ...;
+for (Path name: path) {
+    System.out.println(name);
+}
+```
+
+Path 也实现了 `java.lang.Comparable` 接口，意味着我们可以对 Path 实例进行排序操作；
+
+当您想验证两个Path对象是否位于同一个文件时，可以使用 `isSameFile` 方法。
+
+## File Operations
+
+
+
+
 
 
 
