@@ -36,9 +36,9 @@ Java 8 中关于 I/O 的在 `java.io` 和 `java.nio` 两个包下面，主要包
 
 大部分类在 `java.io` 和 `java.nio.file` 包下。
 
-## I/O Streams
+# I/O Streams
 
-### Byte Streams
+## Byte Streams
 
 Byte Stream 主要用于处理原始二进制数据；
 
@@ -83,7 +83,7 @@ public class UseCase1ByteStreams {
 
 为什么介绍字节流呢？因为所有的流都是建立在字节流上的。
 
-### Character Streams
+## Character Streams
 
 Character Streams 主要处理字符数据的 I/O，自动将 Unicode 字符数据和本地字符集之间进行转换。
 
@@ -157,7 +157,7 @@ public static void main(String[] args) throws IOException {
 }
 ```
 
-### Buffered Streams
+## Buffered Streams
 
 Buffered Streams 通过减少 native API 的调用来优化输入和输出。
 
@@ -189,7 +189,7 @@ pw = new PrintWriter(new FileWriter("target.txt"));
 
 想要手动刷新流，只需要调用 `flush` 方法，对任何输出流都是有效的，但是如果是没有使用缓冲区的输出流调用该方法则不会造成任何影响。
 
-### Scanning and Formatting
+## Scanning and Formatting
 
 允许程序以某种格式读取和写入文本。
 
@@ -198,7 +198,7 @@ pw = new PrintWriter(new FileWriter("target.txt"));
 - scanner API ：扫描器 API 将输入分解为和数据关联的单独的 token；
 - formatting API：格式化 API 将数据以易于阅读的形式输出。
 
-#### Scanning
+### Scanning
 
 `java.util.Scanner` 类型的对象非常实用，通常有两个特性：
 
@@ -246,7 +246,7 @@ public class UseCase3ScannerAndFormatting {
 }
 ```
 
-#### Formatting
+### Formatting
 
 实现格式化的流对象是 PrintWriter（字符流）和 PrintStream（字节流）的实例。
 
@@ -284,11 +284,11 @@ public static void main(String[] args) {
 
 更多信息参考：https://docs.oracle.com/javase/tutorial/essential/io/formatting.html
 
-### I/O from the Command Line
+## I/O from the Command Line
 
 程序通常从命令行运行，并在命令行环境中与用户交互。Java平台以两种方式支持这种交互：Standard Streams（标准流）和 Console（控制台）。
 
-#### Standard Streams
+### Standard Streams
 
 标准流是许多操作系统的一个特性，默认情况下，它们从键盘读取输入并将输出写入显示器。它们还支持文件和程序之间的 I/O，但该功能由命令行解释器控制，而不是程序。
 
@@ -310,7 +310,7 @@ Java平台支持三个标准流：
 InputStreamReader cin = new InputStreamReader(System.in);
 ```
 
-#### The Console
+### The Console
 
 标准流的一个更高级的替代品是控制台（Console）。这是一个单一的、预定义的 Console 类型对象，它具有标准流提供的大多数特性，以及其他特性。控制台对于安全的密码输入特别有用。Console 对象还通过其 reader 和 writer 方法提供了真正的字符流的输入和输出流。
 
@@ -368,7 +368,7 @@ public class UseCase4Console {
 }
 ```
 
-### Data Streams
+## Data Streams
 
 Data Streams 处理原始数据类型和字符串的二进制数据 I/O。
 
@@ -444,7 +444,7 @@ public class UseCase5DataStreams {
 - DataStreams 使用了一种非常糟糕的编程技术：它使用浮点数表示货币值，一般来说，浮点数不利于精确的值。
   - 对于货币值的正确类型是 `java.math.BigDecimal`，不幸的是，BigDecimal 是一种对象类型，因此它不能使用 DataStreams，相应的它需要使用 Object Streams。
 
-### Object Streams
+## Object Streams
 
 处理对象的二进制数据 I/O；
 
@@ -728,7 +728,144 @@ Path 也实现了 `java.lang.Comparable` 接口，意味着我们可以对 Path 
 
 ## File Operations
 
+`java.nio.file` 包下面的另一个重要 entrypoint 就是 `java.nio.file.Files` 类，它提供了丰富的静态方法用于读取、写入以及操作 files 和 directories。同时 Files 类的方法作用于 Path 的实例。
 
+首先我们需要了解以下知识：
+
+- Releasing System Resources（释放操作系统资源）；
+- Catching Exceptions（异常捕捉）；
+- Varargs（可变参数）；
+- Atomic Operations（原子操作）；
+- Method Chaining（链式调用）；
+- What is a Glob?（通配符语法）；
+- Link Awareness（处理符号链接）；
+
+### Releasing System Resources
+
+Files 提供的 API 中使用了很多系统资源，比如：streams 和 channels，对于实现或者继承了 `java.io.Closeable` 接口的资源，一旦确定不再使用它，就需要立即调用 Closeable 接口的 `close()` 方法及时释放系统资源，如果不这样做会对系统性能造成一定的影响（可以调用 close 方法，也可以使用 try-with-resources 语法）。
+
+### Catching Exceptions
+
+使用 file I/O，我们要考虑到各种可能的突发情况：指定的文件是否存在，应用程序有没有对文件系统的访问权限，默认的文件系统实现是否支持特定的 function，等等。可能会遇到很多错误。
+
+所以只要涉及到对文件系统的访问的方法都会声明抛出 IOException，通过 Java SE 7 提供的 trye-with-resources 语法可以很好的处理这些异常并及时释放资源。比如下面的示例代码：
+
+```java
+Charset charset = Charset.forName("US-ASCII");
+String s = ...;
+try (BufferedWriter writer = Files.newBufferedWriter(file, charset)) {
+    writer.write(s, 0, s.length());
+} catch (IOException x) {
+    System.err.format("IOException: %s%n", x);
+}
+```
+
+更多信息，参考 [The try-with-resources Statement](https://docs.oracle.com/javase/tutorial/essential/exceptions/tryResourceClose.html)。
+
+也可以这样做，在 finally 块中调用 close 资源释放流或者通道。
+
+```java
+Charset charset = Charset.forName("US-ASCII");
+String s = ...;
+BufferedWriter writer = null;
+try {
+    writer = Files.newBufferedWriter(file, charset);
+    writer.write(s, 0, s.length());
+} catch (IOException x) {
+    System.err.format("IOException: %s%n", x);
+} finally {
+    if (writer != null) writer.close();
+}
+```
+
+更多信息参考：[Catching and Handling Exceptions](https://docs.oracle.com/javase/tutorial/essential/exceptions/handling.html)。
+
+注意 IOException 是编译器异常，除此之外对于其他继承自 `java.nio.file.FileSystemException` 类的异常，FileSystemException 类也提供了一些有用的方法，比如可以获取到相关的文件 （getFile），获取提示信息（getMessage），获取文件系统操作失败的原因（getReason），以及可能存在的其他文件（getOtherFile）。代码如下：
+
+```java
+try (...) {
+    ...    
+} catch (NoSuchFileException x) {
+    System.err.format("%s does not exist\n", x.getFile());
+}
+```
+
+为了方便，后面的代码中省略了异常处理，但要记得实际编程时一定要异常捕获和资源释放相关操作。
+
+### Varargs
+
+Files 类提供的某些方法在需要声明 flag 时会接收一些任意数量的参数（可变参数），比如下面的方法声明：
+
+```java
+Path Files.move(Path, Path, CopyOption...)
+```
+
+关于可变参数的更多信息，参考：[Arbitrary Numbers of Arguments](https://docs.oracle.com/javase/tutorial/java/javaOO/arguments.html#varargs)。
+
+### Atomic Operations
+
+Files 中的某些方法，比如 move 可以在某些文件系统中原子地执行某些操作。
+
+原子文件操作是一种不能中断或“部分”执行的操作，要么一次成功要么就失败。当有多个进程在文件系统的同一区域上运行时，这一点非常重要，您需要保证每个进程访问一个完整的文件。
+
+### Method Chaining
+
+File I/O 涉及到的很多方法都支持 method chaining 这个概念。
+
+你调用的第一个方法返回一个对象，可以立即利用这个对象继续调用方法（这个方法也会返回一个对象），这样就可以形成链式调用，这种技巧就像下面这样：
+
+```java
+String value = Charset.defaultCharset().decode(buf).toString();
+UserPrincipal group =
+    file.getFileSystem().getUserPrincipalLookupService().
+         lookupPrincipalByName("me");
+```
+
+这种技术产生紧凑的代码，使您可以避免声明不需要的临时变量。
+
+### What is a Glob?
+
+Files 类中有两个方法接收 glob 参数，那么什么是 glob 呢？
+
+我们可以使用 glob 语法去声明 pattern-matching 行为。
+
+一个通配符模式被声明为一个字符串，并与其他字符串进行匹配，比如目录或文件的名称，通配符语法类似下面这样：
+
+- `*`：匹配任意数量的字符（包括空字符）；
+- `**`：有点类似一个星号，但是它可以跨越目录的边界，此语法常用于匹配整条 path；
+- `?`：只匹配一个字符；
+- 花括号指定子模式的集合，比如：
+  - `{sun,moon,stars}` 匹配 "sun"、"moon" 或者 "stars"；
+  - `{temp*,tmp*}`，匹配以 temp 或者 tmp 开头的字符串；
+- 方括号表示一组单个字符，如果使用连字符 `-`，则表示一组字符：
+  - `[aeiou]` 匹配任意小写元音字母；
+  - `[0-9]`：匹配任意数字；
+  - `[A-Z]`：匹配任意大写字母；
+  - `[a-z,A-Z]`：匹配任意小写或者大写字母；
+  - 注意：在方括号内使用 `*、?、\` 时，不具有特殊意义，只会匹配自身；
+- 所有其他字符都与自己匹配；
+- 如果要匹配 `*、?` 或者其他特殊字符，可以在前面加上反斜杠 `\` 表示转义，比如 `\\` 匹配单个反斜线，`\?` 匹配单个 ? 号。
+
+下面是一些例子：
+
+- `*.html`：匹配所有以 .html 为后缀的字符串；
+- `???`：匹配任何只有三个字符的包含字母或数字的字符串；
+- `*[0-9]*`：匹配任意包含一个数值的字符串；
+- `*.{htm,html,pdf}`：匹配以 .htm、.html、.pdf 为后缀的字符串；
+- `a?*.java`：匹配任何以 a 开头，后面至少一个字母或数字，以 .java 结尾的字符串；
+- `{foo*,*[0-9]*}`：匹配任何以 foo 开头的字符串或任何包含数值的字符串
+
+注意：如果在键盘上输入 glob 模式，并且它包含一个特殊字符，则必须将模式放在引号（比如 `"*"`）中，使用反斜杠（比如 `\`），或使用命令行中支持的任何转义机制。
+
+通配符语法功能强大且易于使用，但是，如果它不能满足您的需要，您也可以使用[正则表达式](https://docs.oracle.com/javase/tutorial/essential/regex/index.html)。
+
+更多通配符语法信息，可以参考 API 文档中的  `java.nio.file.FileSystem#getPathMatcher` 方法。
+
+### Link Awareness
+
+Files 类是 `"link aware"` 的，它提供的方法遇到符号链接时会采取默认的处理方式，当然您也可以传入相关参数来决定如何处理。
+
+## Checking a File or Directory
 
 
 
@@ -742,5 +879,5 @@ Path 也实现了 `java.lang.Comparable` 接口，意味着我们可以对 Path 
 - https://docs.oracle.com/javase/8/docs/
 - https://docs.oracle.com/javase/8/docs/technotes/guides/io/index.html
 - https://docs.oracle.com/javase/tutorial/essential/io/index.html
-- https://docs.oracle.com/javase/tutorial/essential/io/pathClass.html
+- https://docs.oracle.com/javase/tutorial/essential/io/check.html
 
