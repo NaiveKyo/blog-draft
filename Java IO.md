@@ -867,9 +867,350 @@ Files 类是 `"link aware"` 的，它提供的方法遇到符号链接时会采�
 
 ## Checking a File or Directory
 
+当我们获取到一个 Path 示例，它可能代表一个文件或者目录，且该 Path 是否真的存在于文件系统中吗？是可读、可写还是可执行的？
 
+> 检验文件或目录的存在性
 
+我们可以通过 Files 类中的方法来检验一个 Path 示例是否在文件系统中存在：
 
+```java
+Path path = Paths.get(System.getProperty("user.dir") + File.separator + "test.log");
+
+// 检测文件是否存在
+System.out.println(Files.exists(path));
+System.out.println(Files.notExists(path));
+```
+
+- `java.nio.file.Files#exists`；
+- `java.nio.file.Files#notExists`；
+
+但是需要注意 `!Files.exists(path)` 不等于 `Files.notExists(path)`，当我们在校验文件的存在性时，有以下三种可能的结果：
+
+（1）文件经校验后确认是存在的；
+
+（2）文件经校验后确认是不存在的；
+
+（3）不能确定文件的状态，出现此种情况一般是程序没有该文件的访问权限导致的；
+
+如果 exists 和 notExists 方法都返回 false，说明这个文件的存在性是无法被验证的。
+
+> 检验是否拥有对文件的访问权限
+
+使用以下方法检验程序对文件的访问权：
+
+- `java.nio.file.Files#isReadable`；
+- `java.nio.file.Files#isWritable`；
+- `java.nio.file.Files#isExecutable`；
+
+下面的代码示例展示了如何获取指定文件存在且程序拥有对它的执行权限：
+
+```java
+Path file = ...;
+boolean isRegularExecutableFile = Files.isRegularFile(file) &
+         Files.isReadable(file) & Files.isExecutable(file);
+```
+
+> 校验两个 Path 定位了同一个文件
+
+当我们使用的文件系统允许使用符号链接的时候，会出现两个 Path 示例指向同一个文件的情况，此时可以使用 `java.nio.file.Files#isSameFile` 方法来检验它们是不是指向了同一个文件：
+
+```java
+Path p1 = ...;
+Path p2 = ...;
+
+if (Files.isSameFile(p1, p2)) {
+    // Logic when the paths locate the same file
+}
+```
+
+## Deleting a File or Directory
+
+你可以删除文件、目录或链接。对于符号链接而言，删除的是这个链接而不是被链接的文件，对于目录而言，这个目录必须是空目录，否则就会删除失败。
+
+Files 类提供了两个删除相关的方法：
+
+- `java.nio.file.Files#delete`；
+- `java.nio.file.Files#deleteIfExists`；
+
+第一个方法在删除文件时如果操作失败就会抛出异常，比如说：文件不存在会抛出 NoSuchFileException：
+
+```java
+try {
+    Files.delete(path);
+} catch (NoSuchFileException x) {
+    System.err.format("%s: no such" + " file or directory%n", path);
+} catch (DirectoryNotEmptyException x) {
+    System.err.format("%s not empty%n", path);
+} catch (IOException x) {
+    // File permission problems are caught here.
+    System.err.println(x);
+}
+```
+
+第二个方法也可以删除文件，但是在文件不存在时不会抛出异常，当您有多个线程删除文件，并且您不想仅仅因为一个线程先删除文件而抛出异常时，静默失败是有用的。
+
+## Copying a File or Directory
+
+可以使用 `java.nio.file.Files#copy` 方法来复制文件或目录，如果目标文件存在则复制失败，除非使用 `REPLACE_EXISTING` 选项来覆盖目标文件。
+
+目录也可以复制。但是，目录内的文件不会被复制，因此即使原始目录中有文件，新目录也是空的。
+
+当复制链接文件时，真正被复制的其实是链接的目标文件，如果只想复制链接文件本身，而不复制被链接的文件，则可以使用 `NOFOLLOW_LINKS` 或者 `REPLACE_EXISTING` 选项。
+
+copy 方法接收一个可变参数 `java.nio.file.CopyOption`，经常使用的是该接口的两个实现 enum：`java.nio.file.StandardCopyOption` 和 `java.nio.file.LinkOption`。
+
+- REPLACE_EXISTING：即使目标文件已经存在，也要执行复制；如果目标是符号链接，则复制链接本身(而不是链接的目标)；如果目标是非空目录，则复制失败，并出现DirectoryNotEmptyException异常；
+- COPY_ATTRIBUTES：将与该文件关联的文件属性复制到目标文件。具体支持的文件属性取决于文件系统和平台，但 `last-modified-time` 跨平台支持，并被复制到目标文件；
+- NOFOLLOW_LINKS：指示不应遵循符号链接。如果要复制的文件是符号链接，则复制该链接(而不是该链接的目标)。
+
+枚举类的信息参考：[Enum Types](https://docs.oracle.com/javase/tutorial/java/javaOO/enum.html)
+
+```jav
+import static java.nio.file.StandardCopyOption.*;
+...
+Files.copy(source, target, REPLACE_EXISTING);
+```
+
+除了文件复制，Files 类还定义了可用于在文件和流之间进行复制的方法。`copy(InputStream, Path, CopyOptions…)` 方法可用于将输入流中的所有字节复制到文件中。`copy(Path, OutputStream)` 方法可用于将文件中的所有字节复制到输出流。
+
+下面的例子使用了 copy 和 Files.walkFileTree 方法来递归复制。
+
+```java
+import java.nio.file.*;
+import static java.nio.file.StandardCopyOption.*;
+import java.nio.file.attribute.*;
+import static java.nio.file.FileVisitResult.*;
+import java.io.IOException;
+import java.util.*;
+
+/**
+ * Sample code that copies files in a similar manner to the cp(1) program.
+ */
+
+public class Copy {
+
+    /**
+     * Returns {@code true} if okay to overwrite a  file ("cp -i")
+     */
+    static boolean okayToOverwrite(Path file) {
+        String answer = System.console().readLine("overwrite %s (yes/no)? ", file);
+        return (answer.equalsIgnoreCase("y") || answer.equalsIgnoreCase("yes"));
+    }
+
+    /**
+     * Copy source file to target location. If {@code prompt} is true then
+     * prompt user to overwrite target if it exists. The {@code preserve}
+     * parameter determines if file attributes should be copied/preserved.
+     */
+    static void copyFile(Path source, Path target, boolean prompt, boolean preserve) {
+        CopyOption[] options = (preserve) ?
+            new CopyOption[] { COPY_ATTRIBUTES, REPLACE_EXISTING } :
+            new CopyOption[] { REPLACE_EXISTING };
+        if (!prompt || Files.notExists(target) || okayToOverwrite(target)) {
+            try {
+                Files.copy(source, target, options);
+            } catch (IOException x) {
+                System.err.format("Unable to copy: %s: %s%n", source, x);
+            }
+        }
+    }
+
+    /**
+     * A {@code FileVisitor} that copies a file-tree ("cp -r")
+     */
+    static class TreeCopier implements FileVisitor<Path> {
+        private final Path source;
+        private final Path target;
+        private final boolean prompt;
+        private final boolean preserve;
+
+        TreeCopier(Path source, Path target, boolean prompt, boolean preserve) {
+            this.source = source;
+            this.target = target;
+            this.prompt = prompt;
+            this.preserve = preserve;
+        }
+
+        @Override
+        public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+            // before visiting entries in a directory we copy the directory
+            // (okay if directory already exists).
+            CopyOption[] options = (preserve) ?
+                new CopyOption[] { COPY_ATTRIBUTES } : new CopyOption[0];
+
+            Path newdir = target.resolve(source.relativize(dir));
+            try {
+                Files.copy(dir, newdir, options);
+            } catch (FileAlreadyExistsException x) {
+                // ignore
+            } catch (IOException x) {
+                System.err.format("Unable to create: %s: %s%n", newdir, x);
+                return SKIP_SUBTREE;
+            }
+            return CONTINUE;
+        }
+
+        @Override
+        public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+            copyFile(file, target.resolve(source.relativize(file)),
+                     prompt, preserve);
+            return CONTINUE;
+        }
+
+        @Override
+        public FileVisitResult postVisitDirectory(Path dir, IOException exc) {
+            // fix up modification time of directory when done
+            if (exc == null && preserve) {
+                Path newdir = target.resolve(source.relativize(dir));
+                try {
+                    FileTime time = Files.getLastModifiedTime(dir);
+                    Files.setLastModifiedTime(newdir, time);
+                } catch (IOException x) {
+                    System.err.format("Unable to copy all attributes to: %s: %s%n", newdir, x);
+                }
+            }
+            return CONTINUE;
+        }
+
+        @Override
+        public FileVisitResult visitFileFailed(Path file, IOException exc) {
+            if (exc instanceof FileSystemLoopException) {
+                System.err.println("cycle detected: " + file);
+            } else {
+                System.err.format("Unable to copy: %s: %s%n", file, exc);
+            }
+            return CONTINUE;
+        }
+    }
+
+    static void usage() {
+        System.err.println("java Copy [-ip] source... target");
+        System.err.println("java Copy -r [-ip] source-dir... target");
+        System.exit(-1);
+    }
+
+    public static void main(String[] args) throws IOException {
+        boolean recursive = false;
+        boolean prompt = false;
+        boolean preserve = false;
+
+        // process options
+        int argi = 0;
+        while (argi < args.length) {
+            String arg = args[argi];
+            if (!arg.startsWith("-"))
+                break;
+            if (arg.length() < 2)
+                usage();
+            for (int i=1; i<arg.length(); i++) {
+                char c = arg.charAt(i);
+                switch (c) {
+                    case 'r' : recursive = true; break;
+                    case 'i' : prompt = true; break;
+                    case 'p' : preserve = true; break;
+                    default : usage();
+                }
+            }
+            argi++;
+        }
+
+        // remaining arguments are the source files(s) and the target location
+        int remaining = args.length - argi;
+        if (remaining < 2)
+            usage();
+        Path[] source = new Path[remaining-1];
+        int i=0;
+        while (remaining > 1) {
+            source[i++] = Paths.get(args[argi++]);
+            remaining--;
+        }
+        Path target = Paths.get(args[argi]);
+
+        // check if target is a directory
+        boolean isDir = Files.isDirectory(target);
+
+        // copy each source file/directory to target
+        for (i=0; i<source.length; i++) {
+            Path dest = (isDir) ? target.resolve(source[i].getFileName()) : target;
+
+            if (recursive) {
+                // follow links when copying files
+                EnumSet<FileVisitOption> opts = EnumSet.of(FileVisitOption.FOLLOW_LINKS);
+                TreeCopier tc = new TreeCopier(source[i], dest, prompt, preserve);
+                Files.walkFileTree(source[i], opts, Integer.MAX_VALUE, tc);
+            } else {
+                // not recursive so source must not be a directory
+                if (Files.isDirectory(source[i])) {
+                    System.err.format("%s: is a directory%n", source[i]);
+                    continue;
+                }
+                copyFile(source[i], dest, prompt, preserve);
+            }
+        }
+    }
+}
+```
+
+## Moving a File or Directory
+
+使用 `java.nio.file.Files#move` 方法，如果目标文件存在，移动将失败，除非指定了 REPLACE_EXISTING 选项（进行覆盖操作）。
+
+可以移动空目录。如果目录不为空，则允许在不移动目录内容的情况下移动目录。在 UNIX 系统上，在同一个分区内移动目录通常包括重命名目录，在这种情况下，即使目录中包含文件，该方法也可以工作。
+
+这个方法也接收一个 CopyOption 的可选参数，但是它只能使用 `java.nio.file.StandardCopyOption`：
+
+- REPLACE_EXISTING：即使目标文件已经存在，也要执行移动。如果目标是符号链接，则符号链接将被替换，但它所指向的内容不受影响；
+- ATOMIC_MOVE：将移动作为原子文件操作执行。如果文件系统不支持原子移动，则抛出异常。使用 ATOMIC_MOVE，您可以将一个文件移动到一个目录中，并保证监视该目录的任何进程都可以访问一个完整的文件。
+
+```java
+import static java.nio.file.StandardCopyOption.*;
+...
+Files.move(source, target, REPLACE_EXISTING);
+```
+
+如上述代码所示，尽管您可以在单个目录上实现 move 方法，但该方法最常与文件树递归机制一起使用。
+
+## Managing Metadata
+
+元数据包括：File、File Store Attributes；
+
+它的定义是：描述某些数据的数据；
+
+对于文件系统，数据包含在它的文件和目录中，元数据跟踪关于每个对象的信息：它是常规文件、目录还是链接？它的大小、创建日期、最后修改日期、文件所有者、组所有者和访问权限是什么？
+
+文件系统的元数据通常称为其文件属性。Files 类包含可用于获取文件的单个属性或设置属性的方法。
+
+| Methods                                                      | Comment                                                      |
+| ------------------------------------------------------------ | ------------------------------------------------------------ |
+| [`size(Path)`](https://docs.oracle.com/javase/8/docs/api/java/nio/file/Files.html#size-java.nio.file.Path-) | 返回指定文件的字节数；                                       |
+| [`isDirectory(Path, LinkOption)`](https://docs.oracle.com/javase/8/docs/api/java/nio/file/Files.html#isDirectory-java.nio.file.Path-java.nio.file.LinkOption...-) | 如果 Path 实例在文件系统中对应的文件是一个目录，则返回 true； |
+| [`isRegularFile(Path, LinkOption...)`](https://docs.oracle.com/javase/8/docs/api/java/nio/file/Files.html#isRegularFile-java.nio.file.Path-java.nio.file.LinkOption...-) | 如果 Path 实例在文件系统中对应的是一个常规文件，则返回 true； |
+| [`isSymbolicLink(Path)`](https://docs.oracle.com/javase/8/docs/api/java/nio/file/Files.html#isSymbolicLink-java.nio.file.Path-) | 如果 Path 实例在文件系统中对应的是一个符号链接，则返回 true； |
+| [`isHidden(Path)`](https://docs.oracle.com/javase/8/docs/api/java/nio/file/Files.html#isHidden-java.nio.file.Path-) | 如果 Path 实例在文件系统中对应的是一个隐藏文件，则返回 true； |
+| [`getLastModifiedTime(Path, LinkOption...)`](https://docs.oracle.com/javase/8/docs/api/java/nio/file/Files.html#getLastModifiedTime-java.nio.file.Path-java.nio.file.LinkOption...-) [`setLastModifiedTime(Path, FileTime)`](https://docs.oracle.com/javase/8/docs/api/java/nio/file/Files.html#setLastModifiedTime-java.nio.file.Path-java.nio.file.attribute.FileTime-) | 返回或者设置指定 Path 文件的最后修改时间；                   |
+| [`getOwner(Path, LinkOption...)`](https://docs.oracle.com/javase/8/docs/api/java/nio/file/Files.html#getOwner-java.nio.file.Path-java.nio.file.LinkOption...-) [`setOwner(Path, UserPrincipal)`](https://docs.oracle.com/javase/8/docs/api/java/nio/file/Files.html#setOwner-java.nio.file.Path-java.nio.file.attribute.UserPrincipal-) | 获取或者设置指定 Path 文件的拥有者；                         |
+| [`getPosixFilePermissions(Path, LinkOption...)`](https://docs.oracle.com/javase/8/docs/api/java/nio/file/Files.html#getPosixFilePermissions-java.nio.file.Path-java.nio.file.LinkOption...-) [`setPosixFilePermissions(Path, Set)`](https://docs.oracle.com/javase/8/docs/api/java/nio/file/Files.html#setPosixFilePermissions-java.nio.file.Path-java.util.Set-) | Returns or sets a file's POSIX file permissions.             |
+| [`getAttribute(Path, String, LinkOption...)`](https://docs.oracle.com/javase/8/docs/api/java/nio/file/Files.html#getAttribute-java.nio.file.Path-java.lang.String-java.nio.file.LinkOption...-) [`setAttribute(Path, String, Object, LinkOption...)`](https://docs.oracle.com/javase/8/docs/api/java/nio/file/Files.html#setAttribute-java.nio.file.Path-java.lang.String-java.lang.Object-java.nio.file.LinkOption...-) | Returns or sets the value of a file attribute.               |
+
+如果一个程序同时需要多个文件属性，使用检索单个属性的方法可能效率很低。重复访问文件系统以检索单个属性可能会对性能产生不利影响。Files类提供了两个 readAttributes 方法，用于在一次批量操作中获取文件的属性。
+
+| Method                                                       | Comment                                                      |
+| ------------------------------------------------------------ | ------------------------------------------------------------ |
+| [`readAttributes(Path, String, LinkOption...)`](https://docs.oracle.com/javase/8/docs/api/java/nio/file/Files.html#readAttributes-java.nio.file.Path-java.lang.String-java.nio.file.LinkOption...-) | Reads a file's attributes as a bulk operation. The `String` parameter identifies the attributes to be read. |
+| [`readAttributes(Path, Class, LinkOption...)`](https://docs.oracle.com/javase/8/docs/api/java/nio/file/Files.html#readAttributes-java.nio.file.Path-java.lang.Class-java.nio.file.LinkOption...-) | Reads a file's attributes as a bulk operation. The `Class<A>` parameter is the type of attributes requested and the method returns an object of that class. |
+
+在展示 readAttributes 方法的示例之前，我们需要注意一点：不同的文件系统对于应该跟踪哪些属性有不同的概念。出于这个原因，相关的文件属性被分组到 `view` 中。一个 `view`  映射到特定的文件系统实现，比如 POSIX 或 DOS，或者一个常见的功能，比如 file ownership。
+
+支持以下 views：
+
+- `java.nio.file.attribute.BasicFileAttributeView`：
+  - 提供所有文件系统实现必须支持的基本属性的视图。
+- `java.nio.file.attribute.DosFileAttributeView`：
+  - 
+- `java.nio.file.attribute.PosixFileAttributeView`
+- `java.nio.file.attribute.FileOwnerAttributeView`
+- `java.nio.file.attribute.AclFileAttributeView`
+- `java.nio.file.attribute.UserDefinedFileAttributeView`
 
 
 
