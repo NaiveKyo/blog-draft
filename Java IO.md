@@ -1174,7 +1174,7 @@ Files.move(source, target, REPLACE_EXISTING);
 
 元数据包括：File、File Store Attributes；
 
-它的定义是：描述某些数据的数据；
+它的定义是：和数据有关的数据；
 
 对于文件系统，数据包含在它的文件和目录中，元数据跟踪关于每个对象的信息：它是常规文件、目录还是链接？它的大小、创建日期、最后修改日期、文件所有者、组所有者和访问权限是什么？
 
@@ -1206,19 +1206,245 @@ Files.move(source, target, REPLACE_EXISTING);
 - `java.nio.file.attribute.BasicFileAttributeView`：
   - 提供所有文件系统实现必须支持的基本属性的视图。
 - `java.nio.file.attribute.DosFileAttributeView`：
-  - 
-- `java.nio.file.attribute.PosixFileAttributeView`
-- `java.nio.file.attribute.FileOwnerAttributeView`
-- `java.nio.file.attribute.AclFileAttributeView`
-- `java.nio.file.attribute.UserDefinedFileAttributeView`
+  - 将基本属性视图扩展到支持 DOS 属性的文件系统上的 the standard four bits。
+- `java.nio.file.attribute.PosixFileAttributeView`：
+  - 将基本属性视图扩展到支持标准的 POSIX 家族 (如 UNIX ) 的文件系统上的属性。这些属性包括文件所有者、组所有者和 9 个相关的访问权限。
+- `java.nio.file.attribute.FileOwnerAttributeView`：
+  - 任何支持文件所有者概念的文件系统实现都支持。
+- `java.nio.file.attribute.AclFileAttributeView`：
+  - 支持读取或更新文件的访问控制列表 (ACL)。支持 NFSv4 ACL 模型。还可能支持与 NFSv4 模型有良好定义映射的任何 ACL 模型(例如Windows ACL模型)。 
+- `java.nio.file.attribute.UserDefinedFileAttributeView`：
+  - 启用对用户定义元数据的支持。该视图可以映射到系统支持的任何扩展机制。例如，在 Solaris 操作系统中，您可以使用这个视图存储文件的 MIME 类型。
+
+特定的文件系统实现可能只支持基本的文件属性视图，也可能支持这些文件属性视图中的几个。文件系统实现也可能支持此 API 中未包含的其他属性视图。
+
+在大多数情况下，您不应该直接处理任何 `FileAttributeView` 接口。（f you do need to work directly with the `FileAttributeView`, you can access it via the [`getFileAttributeView(Path, Class, LinkOption...)`](https://docs.oracle.com/javase/8/docs/api/java/nio/file/Files.html#getFileAttributeView-java.nio.file.Path-java.lang.Class-java.nio.file.LinkOption...-) method.）
+
+readAttributes 方法使用泛型，可用于读取任何文件属性视图的属性。
+
+下面介绍的内容包括以下几个主题：
+
+- Basic File Attributes：基础文件属性；
+- Setting Time Stamps：设置时间戳；
+- DOS File Attributes：DOS 文件属性；
+- POSIX File Permissions：可移植操作系统文件权限；
+- Setting a File or Group Owner：设置文件或组的所有者；
+- User-Defined File Attributes：用户自定义文件属性；
+- File Store Attributes：文件存储属性。
+
+### 基础文件属性
+
+如前所述，要读取文件的基本属性，可以使用 Files.readAttributes 方法，它在一个批量操作中读取所有基本属性。这比分别访问文件系统来读取每个单独的属性要高效得多。varargs 参数目前支持 LinkOption enum, NOFOLLOW_LINKS。当您不希望使用符号链接时，请使用此选项。
+
+关于时间戳：基础属性中包含三种时间戳：creationTime、lastModifiedTime、lastAccessTime。这些时间戳中的任何一个在特定的实现中都可能不受支持，在这种情况下，相应的访问器方法返回一个特定于实现的值。在支持的情况下，时间戳将作为 `FileTime` 对象返回。
+
+下面的代码展示了读取指定文件的基础文件属性，通过 `java.nio.file.attribute.BasicFileAttributes` 接口获取：
+
+```java
+Path file = ...;
+BasicFileAttributes attr = Files.readAttributes(file, BasicFileAttributes.class);
+
+System.out.println("creationTime: " + attr.creationTime());
+System.out.println("lastAccessTime: " + attr.lastAccessTime());
+System.out.println("lastModifiedTime: " + attr.lastModifiedTime());
+
+System.out.println("isDirectory: " + attr.isDirectory());
+System.out.println("isOther: " + attr.isOther());
+System.out.println("isRegularFile: " + attr.isRegularFile());
+System.out.println("isSymbolicLink: " + attr.isSymbolicLink());
+System.out.println("size: " + attr.size());
+```
+
+除了本例中显示的法外，还有一个 fileKey 方法，该方法返回唯一标识文件的对象，如果没有可用的文件键，则返回 null。
+
+### 设置时间戳
+
+比如说修改 last modified time：
+
+```java
+Path file = ...;
+BasicFileAttributes attr =
+    Files.readAttributes(file, BasicFileAttributes.class);
+long currentTime = System.currentTimeMillis();
+FileTime ft = FileTime.fromMillis(currentTime);
+Files.setLastModifiedTime(file, ft);
+```
+
+### DOS 文件属性
+
+DOS 文件属性在其他非 DOS 系统上也受支持，比如 Samba。下面的代码演示使用 DosFileAttributes：
+
+```java
+Path file = ...;
+try {
+    DosFileAttributes attr =
+        Files.readAttributes(file, DosFileAttributes.class);
+    System.out.println("isReadOnly is " + attr.isReadOnly());
+    System.out.println("isHidden is " + attr.isHidden());
+    System.out.println("isArchive is " + attr.isArchive());
+    System.out.println("isSystem is " + attr.isSystem());
+} catch (UnsupportedOperationException x) {
+    System.err.println("DOS file" +
+        " attributes not supported:" + x);
+}
+```
+
+但是，也可以使用 `setAttributes(Path, String, Object, LinkOption...)` 方法：
+
+```java
+Path file = ...;
+Files.setAttribute(file, "dos:hidden", true);
+```
+
+### POSIX 文件权限
+
+POSIX 是 Portable Operating System Interface for UNIX 的缩写，是一组 IEEE 和 ISO 标准，旨在确保不同 UNIX 风格之间的互操作性。如果一个程序符合这些 POSIX 标准，它应该很容易移植到其他 POSIX 兼容的操作系统上。
+
+除了 file owner 和 group owner，POSIX 还支持9种文件权限：read, write, and execute permissions for the file owner, members of the same group, and "everyone else."
+
+下面演示使用 PosixFileAttributes ：
+
+```java
+Path file = ...;
+PosixFileAttributes attr =
+    Files.readAttributes(file, PosixFileAttributes.class);
+System.out.format("%s %s %s%n",
+    attr.owner().getName(),
+    attr.group().getName(),
+    PosixFilePermissions.toString(attr.permissions()));
+```
+
+`java.nio.file.attribute.PosixFilePermissions` 工具类提供了一些好用的方法：
+
+- `toString` 方法：用字符串描述权限，比如 `rw-r--r--`；
+- `fromString` 方法：接收一个权限字符串将其转换为一组 PosixFilePermission 集合；
+- `asFileAttribute` 方法：将一个文件权限的 Set 构建为一个文件属性，可以传递给 `Path.createFile` 或 `Path.createDirectory` 方法。
+
+下面的代码片段从一个文件中读取属性并创建一个新文件，将原始文件中的属性分配给新文件：
+
+```java
+Path sourceFile = ...;
+Path newFile = ...;
+PosixFileAttributes attrs =
+    Files.readAttributes(sourceFile, PosixFileAttributes.class);
+FileAttribute<Set<PosixFilePermission>> attr =
+    PosixFilePermissions.asFileAttribute(attrs.permissions());
+Files.createFile(file, attr);
+```
+
+asFileAttribute 方法将一组 permission 包装为一个 FileAttribute，上述代码尝试使用这个文件属性去创建新的文件，注意 umask 也适用新创建的文件，这就意味着通过这种方式创建的文件是安全的。
+
+要将文件的权限设置为硬编码字符串表示的值，您可以使用以下代码:
+
+```java
+Path file = ...;
+Set<PosixFilePermission> perms =
+    PosixFilePermissions.fromString("rw-------");
+FileAttribute<Set<PosixFilePermission>> attr =
+    PosixFilePermissions.asFileAttribute(perms);
+Files.setPosixFilePermissions(file, perms);
+```
+
+[Chmod](https://docs.oracle.com/javase/tutorial/essential/io/examples/Chmod.java) 例子的功能和 chmod 命令类似，可以递归地修改文件权限。
+
+### 设置 File or Group Owner
+
+如果想根据字符串找到对应的 file owner 或 group owner，可以使用 `java.nio.file.attribute.UserPrincipalLookupService` 服务，该服务接收一个字符串（user name 或者 group name），并返回一个 `UserPrincipal` 实例。可以使用 `FileSystems.getDefault().getUserPrincipalLookupService();` 获取默认文件系统的 user principal look-up service。
+
+下面展示如何设置文件所有者：
+
+```java
+Path file = ...;
+UserPrincipal owner = file.GetFileSystem().getUserPrincipalLookupService()
+        .lookupPrincipalByName("sally");
+Files.setOwner(file, owner);
+```
+
+在 Files 类中没有专门用于设置 group owner 的方法，但是一个更好更安全的方式是通过 POSIX 文件属性 view 去做：
+
+```java
+Path file = ...;
+GroupPrincipal group =
+    file.getFileSystem().getUserPrincipalLookupService()
+        .lookupPrincipalByGroupName("green");
+Files.getFileAttributeView(file, PosixFileAttributeView.class)
+     .setGroup(group);
+```
+
+### 用户自定义文件属性
+
+如果文件系统提供的 file attributes 不能够满足需求，我们就可以使用 `java.nio.file.attribute.UserDefinedFileAttributeView` 创建和跟踪自己的文件属性。
+
+一些实现将此概念映射到特殊文件系统的某些特性上，比如 NTFS 的可选数据流（Alternative Data Streams），ext3 和 XFS 的扩展属性。大多数实现对这些值的大小施加限制，例如，ext3 将扩展属性大小限制为 4KB。
+
+也可以利用文件的 MIME type 来存储用户自定义属性：
+
+```java
+Path file = ...;
+UserDefinedFileAttributeView view = Files
+    .getFileAttributeView(file, UserDefinedFileAttributeView.class);
+view.write("user.mimetype",
+           Charset.defaultCharset().encode("text/html");
+```
+
+使用下列代码读取 MIME type：
+
+```java
+Path file = ...;
+UserDefinedFileAttributeView view = Files
+.getFileAttributeView(file,UserDefinedFileAttributeView.class);
+String name = "user.mimetype";
+ByteBuffer buf = ByteBuffer.allocate(view.size(name));
+view.read(name, buf);
+buf.flip();
+String value = Charset.defaultCharset().decode(buf).toString();
+```
+
+[Xdd](https://docs.oracle.com/javase/tutorial/essential/io/examples/Xdd.java) 代码示例展示了如何 get、set、delete 用户自定义属性。
+
+注意：在 Linux 中，您可能必须为用户定义的属性启用扩展属性才能工作。如果在尝试访问用户定义属性视图时收到 UnsupportedOperationException 异常，则需要重新挂载文件系统。下面的命令为 ext3 文件系统重新挂载具有扩展属性的根分区：
+
+```shell
+$ sudo mount -o remount,user_xattr /
+```
+
+如果上述命令不适用当前使用的 Linux 系统，请参考相关文档。注意上述命令不是永久性的，要想永久生效，需要添加条目：`/etc/fstab`
+
+### File Store Attributes
+
+可以使用 `java.nio.file.FileStore` 学习关于 file store 的更多信息，比如还有多少空间是可用的，`getFileStore(Path)` 方法获取指定文件的存储空间。
+
+下面的代码演示如何获取指定文件的占用存储空间大小：
+
+```java
+Path file = ...;
+FileStore store = Files.getFileStore(file);
+
+long total = store.getTotalSpace() / 1024;
+long used = (store.getTotalSpace() -
+             store.getUnallocatedSpace()) / 1024;
+long avail = store.getUsableSpace() / 1024;
+```
+
+[DiskUsage](https://docs.oracle.com/javase/tutorial/essential/io/examples/DiskUsage.java) 示例使用这个 API 打印默认文件系统中所有存储的磁盘空间信息。本例使用 FileSystem 类中的 getFileStores 方法获取文件系统的所有文件存储。
+
+## Reading, Writing, and Creating Files
+
+
 
 
 
 进度：
 
 - https://docs.oracle.com/javase/8/javase-books.htm
+
 - https://docs.oracle.com/javase/8/docs/
+
 - https://docs.oracle.com/javase/8/docs/technotes/guides/io/index.html
+
 - https://docs.oracle.com/javase/tutorial/essential/io/index.html
-- https://docs.oracle.com/javase/tutorial/essential/io/check.html
+
+- https://docs.oracle.com/javase/tutorial/essential/io/file.html
+
+  
 
