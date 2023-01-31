@@ -1430,6 +1430,298 @@ long avail = store.getUsableSpace() / 1024;
 
 ## Reading, Writing, and Creating Files
 
+本小节讨论读取、写入、创建和打开文件。有许多文件相关的 I/O API 方法可以使用。
+
+下表按照复杂程度由低到高列出一些常用 API：
+
+| 方法                                        | 使用场景                                            | 复杂程度（低 -> 高） |
+| ------------------------------------------- | --------------------------------------------------- | -------------------- |
+| `readAllBytes`<br/>`readAllLines`           | 经常使用的方法，适用小文件                          |                      |
+| `newBufferedReader`<br/>`newBufferedWriter` | 适合文本文件（txt 后缀）                            |                      |
+| `newInputStream`<br/>`newOutputStream`      | 流、不使用缓存的，通常和已有的 API 一起使用         |                      |
+| `newByteChannel`                            | channels 和 ByteBuffers（NIO 中的管道和堆外缓冲区） |                      |
+| `FileChannel`                               | 增强特性，file-locking，memory-mapped I/O           |                      |
+
+上表前几行的是一些工具方法，如 `readAllBytes`、`readAllLines`，以及 write 方法，适用于常用的简单的场景；上表中间几行的则是用于遍历文本流或文本行，如 `newBufferedReader`、`newBufferedWriter`；然后就是 `newInputStream` 和 `newOutputStream`；这几个方法可以与 `java.io` 包下的工具协同使用。
+
+最后几行的则是用于同 `ByteChannels`、`SeekableByteChannels` 以及 `ByteBuffers` 一起使用，比如 `newByteChannel` 方法。
+
+最后面是 `FileChannel` 它主要用于更高级的应用场景，比如文件锁（file locking）或者内存映射 I/O（memory-mapped I/O）。
+
+> 注意：创建新的文件允许我们使用一组初始属性。比如在支持 POSIX 标准（如 UNIX）的文件系统上，我们可以在创建文件时声明 file owner、group owner 以及其他权限，上一章节关于文件元数据管理中已经提到了如何设置和访问文件。
+
+本节则介绍以下知识：
+
+-  `OpenOptions` 参数；
+- 小文件常用的方法；
+- 文本文件的 Buffered I/O；
+- Methods for Unbuffered Streams and Interoperable with `java.io` APIs；
+- Channels 和 `ByteBuffers` 相关的方法；
+- 创建普通和临时文件的方法；
+
+### OpenOptions 参数
+
+本小节介绍的不少方法都会接收一个可选的 OpenOptions 类型的参数，如果未提供该参数则采取默认处理策略。
+
+`java.nio.file.OpenOption` 有几个实现类，其中 `java.nio.file.StandardOpenOption` 是标准实现，它提供几个常量：
+
+- `WRITE`：以 **写** 的形式访问该文件；
+- `APPEND`：向文件末尾追加数据，它可以和 WRITE、CREATE 一起使用；
+- `TRUNCATE_EXISTING`：将文件截断为 0 bytes，它和 WRITE 一起使用；
+- `CREATE_NEW`：创建一个新文件，当该文件已存在时抛出异常；
+- `CREATE`：文件存在则打开该文件，文件不存在则创建新文件；
+- `DELETE_ON_CLOSE`：在流关闭时删除该文件，这个属性非常适合临时文件；
+- `SPARSE`：暗示将要创建的文件是 sparse （稀疏）的。某些操作系统支持这个增强选项，比如 NTFS，如果某些大文件存在 data "gaps" （数据空白）的情况，文件系统能够以更好的方式存储它，避免造成磁盘空间的浪费；
+- `SYNC`：保持文件（包括内容和元数据）与底层存储设备同步；
+- `DSYNC`：仅保持文件内容和底层存储设备同步；
+
+
+
+### 小文件常用的方法
+
+（1）从文件中读取所有字节或所有行；
+
+如果您有一个较小的文件，并且希望一次性读取其全部内容，此时可以使用 `readAllBytes(Path)` 或者 `readAllLines(Path, Charset)` 方法。这些方法为您处理大部分工作，例如打开和关闭流，但不适用于处理大型文件。
+
+```java
+Path file = ...;
+byte[] fileArray;
+fileArray = Files.readAllBytes(file);
+```
+
+（2）向一个文件写入所有字节或行；
+
+可以使用其中一种写入方法将字节或行写入文件。
+
+- `write(Path, byte[], OpenOption...)`；
+- `write(Path, Iterable< extends CharSequence>, Charset, OpenOption...)`；
+
+```java
+Path file = ...;
+byte[] buf = ...;
+Files.write(file, buf);
+```
+
+### 文本文件的缓冲 I/O 方法
+
+`java.nio.file` 包支持 channel I/O，它可以在缓冲区中移动数据，绕过一些可能会阻碍 stream I/O的层。
+
+（1）使用 Buffered Stream I/O 读取文件；
+
+`newBufferedReader(Path, Charset)` 方法用于打开文件并进行读取，返回一个 `BufferedReader` 用于更高效的读取文本信息； 
+
+下面展示如何使用 `newBufferedReader` 方法读取文件：
+
+```java
+Charset charset = Charset.forName("US-ASCII");
+try (BufferedReader reader = Files.newBufferedReader(file, charset)) {
+    String line = null;
+    while ((line = reader.readLine()) != null) {
+        System.out.println(line);
+    }
+} catch (IOException x) {
+    System.err.format("IOException: %s%n", x);
+}
+```
+
+（2）使用 Buffered Stream I/O 写出文件；
+
+`newBufferedWriter(Path, Charset, OpenOption...)` 方法使用 `BufferedWriter` 写出数据到文件：
+
+```java
+Charset charset = Charset.forName("US-ASCII");
+String s = ...;
+try (BufferedWriter writer = Files.newBufferedWriter(file, charset)) {
+    writer.write(s, 0, s.length());
+} catch (IOException x) {
+    System.err.format("IOException: %s%n", x);
+}
+```
+
+### Unbuffered Streams 方法协同 java.io API
+
+（1）使用 Stream I/O 读取文件；
+
+可以使用 `newInputStream(Path, OpenOption...)` 方法打开并读取文件，它返回一个未使用缓冲的字节输入流：
+
+```java
+Path file = ...;
+try (InputStream in = Files.newInputStream(file);
+    BufferedReader reader =
+      new BufferedReader(new InputStreamReader(in))) {
+    String line = null;
+    while ((line = reader.readLine()) != null) {
+        System.out.println(line);
+    }
+} catch (IOException x) {
+    System.err.println(x);
+}
+```
+
+（2）使用 Stream I/O 创建并写出文件；
+
+可以使用 `newOutputStream(Path, OpenOption...)` 方法创建文件、追加数据到文件、写入数据到文件。该方法打开或创建文件并写出字节数据，它返回一个未被缓冲的字节输出流；
+
+该方法接收 OpenOption 参数，如果未提供该参数并且目标文件不存在就创建文件，如果文件已存在，就会截断文件，等同于使用 CREATE 和 TRUNCATE_EXISTING 调用方法。
+
+下面演示打开一个日志文件，如果该文件不存在则创建，已存在就追加数据：
+
+```java
+import static java.nio.file.StandardOpenOption.*;
+import java.nio.file.*;
+import java.io.*;
+
+public class LogFileTest {
+
+  public static void main(String[] args) {
+
+    // Convert the string to a
+    // byte array.
+    String s = "Hello World! ";
+    byte data[] = s.getBytes();
+    Path p = Paths.get("./logfile.txt");
+
+    try (OutputStream out = new BufferedOutputStream(
+      Files.newOutputStream(p, CREATE, APPEND))) {
+      out.write(data, 0, data.length);
+    } catch (IOException x) {
+      System.err.println(x);
+    }
+  }
+}
+```
+
+### Channels 和 ByteBuffers 相关的方法
+
+（1）使用 Channel I/O 读写文件；
+
+stream I/O 一次读取一个字符，而 channel I/O 一次读取一个缓冲区。
+
+`java.nio.channels.ByteChannel` 接口提供了基础的 read 和 write 功能，`java.nio.channels.SeekableByteChannel` 则在 ByteChannel 的基础上提供了维持 channel 中的位置以及改变位置的能力，还支持截断和 channel 关联的文件、查询文件大小的功能。
+
+这种能力可以找到文件中的某个位置，然后从该位置开始读取或者写入数据，从而实现对文件的随机访问。
+
+有两个方法用于读或写 channel I/O：
+
+- `newByteChannel(Path, OpenOption...)`；
+- `newByteChannel(Path, Set<? extends OpenOption>, FileAttribute<?>...)`；
+
+> 注意：`newByteChannel` 方法返回的是 `SeekableByteChannel` 实例。结合默认的文件系统，你可以将其转换为 `FileChannel` 实例，以便使用更高级的特性，例如将文件的某个区域直接映射到内存中以实现更快的访问，锁定文件的某个区域使得其他进程无法访问它，或者从某个绝对位置读取和写入字节而不影响 channel 的当前位置。
+
+`newByteChannel` 方法也接受一个可选的 OpenOption 参数，支持 newOutputStream 方法使用的相同的选项，另外还有一个选项：READ 是必需的，因为 SeekableByteChannel 同时支持读和写。
+
+指定 READ 将打开读取通道。指定 WRITE 或 APPEND 打开写入通道。如果没有指定这些选项，则打开通道以供读取。
+
+下面的代码演示了读取文件并将内容打印到标准输出：
+
+```java
+public static void readFile(Path path) throws IOException {
+
+    // Files.newByteChannel() defaults to StandardOpenOption.READ
+    try (SeekableByteChannel sbc = Files.newByteChannel(path)) {
+        final int BUFFER_CAPACITY = 10;
+        ByteBuffer buf = ByteBuffer.allocate(BUFFER_CAPACITY);
+
+        // Read the bytes with the proper encoding for this platform. If
+        // you skip this step, you might see foreign or illegible
+        // characters.
+        String encoding = System.getProperty("file.encoding");
+        while (sbc.read(buf) > 0) {
+            buf.flip();
+            System.out.print(Charset.forName(encoding).decode(buf));
+            buf.clear();
+        }
+    }    
+}
+```
+
+下面的示例是为 UNIX 和其他 POSIX 文件系统编写的，它使用一组特定的文件权限创建一个日志文件。代码创建一个日志文件，如果日志文件已经存在，则追加到日志文件，创建日志文件时，owner 具有读写权限，group 具有只读权限。
+
+```java
+import static java.nio.file.StandardOpenOption.*;
+import java.nio.*;
+import java.nio.channels.*;
+import java.nio.file.*;
+import java.nio.file.attribute.*;
+import java.io.*;
+import java.util.*;
+
+public class LogFilePermissionsTest {
+
+  public static void main(String[] args) {
+  
+    // Create the set of options for appending to the file.
+    Set<OpenOption> options = new HashSet<OpenOption>();
+    options.add(APPEND);
+    options.add(CREATE);
+
+    // Create the custom permissions attribute.
+    Set<PosixFilePermission> perms =
+      PosixFilePermissions.fromString("rw-r-----");
+    FileAttribute<Set<PosixFilePermission>> attr =
+      PosixFilePermissions.asFileAttribute(perms);
+
+    // Convert the string to a ByteBuffer.
+    String s = "Hello World! ";
+    byte data[] = s.getBytes();
+    ByteBuffer bb = ByteBuffer.wrap(data);
+    
+    Path file = Paths.get("./permissions.log");
+
+    try (SeekableByteChannel sbc =
+      Files.newByteChannel(file, options, attr)) {
+      sbc.write(bb);
+    } catch (IOException x) {
+      System.out.println("Exception thrown: " + x);
+    }
+  }
+}
+```
+
+### 创建常规或临时文件的方法
+
+（1）创建常规文件；
+
+您可以使用 `createFile(Path, FileAttribute<?>)` 方法创建带有初始属性集的空文件。例如，如果在创建时希望文件具有特定的文件权限集，则使用 createFile 方法来实现此目的。
+
+如果不指定任何属性，则使用默认属性创建文件。如果文件已经存在，createFile 将抛出异常。
+
+下面演示创建具有默认权限的文件：
+
+```java
+Path file = ...;
+try {
+    // Create the empty file with default permissions, etc.
+    Files.createFile(file);
+} catch (FileAlreadyExistsException x) {
+    System.err.format("file named %s" +
+        " already exists%n", file);
+} catch (IOException x) {
+    // Some other sort of failure, such as permissions.
+    System.err.format("createFile error: %s%n", x);
+}
+```
+
+（2）创建临时文件；
+
+您可以使用以下 createTempFile 方法之一创建临时文件:
+
+- `createTempFile(Path, String, String, FileAttribute<?>)`；
+- `createTempFile(String, String, FileAttribute<?>)`；
+
+第一个方法允许代码为临时文件指定一个目录，第二个方法在默认的临时文件目录中创建一个新文件。这两种方法都允许您为文件名指定后缀，第一个方法还允许您指定前缀。下面的代码片段给出了第二个方法的示例:
+
+```java
+try {
+    Path tempFile = Files.createTempFile(null, ".myapp");
+    System.out.format("The temporary file" +
+        " has been created: %s%n", tempFile)
+;
+} catch (IOException x) {
+    System.err.format("IOException: %s%n", x);
+}
+```
+
 
 
 
@@ -1444,7 +1736,7 @@ long avail = store.getUsableSpace() / 1024;
 
 - https://docs.oracle.com/javase/tutorial/essential/io/index.html
 
-- https://docs.oracle.com/javase/tutorial/essential/io/file.html
+- https://docs.oracle.com/javase/tutorial/essential/io/rafs.html
 
   
 
