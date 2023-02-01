@@ -1722,6 +1722,82 @@ try {
 }
 ```
 
+## Random Access File
+
+Random Access File（随机访问文件）允许对文件内容进行无顺序或随机的访问。要随机访问一个文件，需要打开该文件，寻找一个特定的位置，然后从该位置开始对该文件进行读写。
+
+这个功能可以通过 `SeekableByteChannel` 接口实现，它利用了一种叫做当前位置（current position）的概念扩展了 Channel I/O 的功能；该接口提供的方法使您能够设置或查询位置，然后可以从该位置读取数据或将数据写入该位置。这个 API 由几个方法组成：
+
+- `position`：返回当前 channel 的位置；
+- `position(long)`：设置 channel 的位置；
+- `read(ByteBuffer)`：从 channel 中读取字节到 buffer；
+- `write(ByteBuffer)`：从 buffer 中读取字节然后写入到 channel；
+- `truncate(long)`：截断和 channel 连接的文件（或其他实体）；
+
+上一小节提到了 Files 工具类中使用 Channel I/O 读写文件（`Path.newByteChannel` 返回 SeekableByteChannel 实例），我们可以直接使用该实例，也可以将其转换为 `FileChannel` 以便使用更多高级特性，比如 memory-mapped（将文件的某个区域映射到内存中以便更快的访问）、file-locking（锁定文件的某个区域），或者在不影响 channel 当前 position 的同时从 absolute location 处读写字节。
+
+下面的代码演示如何使用 newByteChannel 打开一个文件进行读写，并将 SeekableByteChannel 转换为 FileChannel：
+
+```java
+String s = "I was here!\n";
+byte data[] = s.getBytes();
+ByteBuffer out = ByteBuffer.wrap(data);
+
+ByteBuffer copy = ByteBuffer.allocate(12);
+
+try (FileChannel fc = (FileChannel.open(file, READ, WRITE))) {
+    // Read the first 12
+    // bytes of the file.
+    int nread;
+    do {
+        nread = fc.read(copy);
+    } while (nread != -1 && copy.hasRemaining());
+
+    // Write "I was here!" at the beginning of the file.
+    fc.position(0);
+    while (out.hasRemaining())
+        fc.write(out);
+    out.rewind();
+
+    // Move to the end of the file.  Copy the first 12 bytes to
+    // the end of the file.  Then write "I was here!" again.
+    long length = fc.size();
+    fc.position(length-1);
+    copy.flip();
+    while (copy.hasRemaining())
+        fc.write(copy);
+    while (out.hasRemaining())
+        fc.write(out);
+} catch (IOException x) {
+    System.out.println("I/O Exception: " + x);
+}
+```
+
+具体过程是这样的：
+
+首先，从文件开头开始读取 12 个字节的内容并从开头位置重新写入字符串 "I was here!\n"，
+
+然后，文件中的当前位置被移到末尾，即 "\n" 的位置，从该位置继续吸入 "I was here!\n"  字符串，
+
+最后，文件上的通道被关闭。
+
+如果文件原有内容是这样的：
+
+```
+123
+```
+
+执行代码后会是这样的：
+
+```
+I was here!123
+I was here!
+```
+
+
+
+关于 Buffer 的一些知识比如 mark、position、limit、capacity 的概念参考：[Java  Core Technology](https://naivekyo.github.io/2022/06/06/java-core-technology-review-si/)
+
 
 
 
@@ -1736,7 +1812,7 @@ try {
 
 - https://docs.oracle.com/javase/tutorial/essential/io/index.html
 
-- https://docs.oracle.com/javase/tutorial/essential/io/rafs.html
+- https://docs.oracle.com/javase/tutorial/essential/io/dirs.html
 
   
 
