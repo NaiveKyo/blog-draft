@@ -1589,6 +1589,656 @@ try {
 
 如果 Path 不是符号链接，该方法将抛出 NotLinkException 异常。
 
+## Walking the File Tree
+
+如果要创建通过文件树的形式递归访问文件的应用；
+
+或者要删除所有 .class 后缀的文件；
+
+或者找到过去一年里没有访问过的文件；
+
+此时你可以使用 `java.nio.file.FileVisitor` 接口。
+
+本小节介绍以下内容：
+
+- FileVisitor 接口；
+- Kickstarting the Process；
+- 创建 FileVisitor 时的注意事项；
+- Controlling the Flow；
+- 案例；
+
+### FileVisitor 接口
+
+要想遍历文件树，首先要做的就算实现 FileVisitor 接口。FileVisitor 指定在遍历时 key points 需要遵循的行为：当正常访问某个文件时、访问目录前、访问目录后或者发生错误时，该接口声明了四个方法对应四种场景：
+
+- `preVisitDirectory`：在访问目录之前调用该方法；
+- `postVisitDirectory`：在访问目录之后调用该方法，如果在访问目录时发生了异常，异常将会作为参数传递给该方法；
+- `visitFile`：在访问文件时调用该方法，文件的 BasicFileAttributes 将会作为参数传递给该方法，当然也可以使用前面提高的某些方法去获得文件的属性。比如可以使用 DosFileAttributeView 判断文件是否拥有 "hidden" 位；
+- `visitFileFailed`：当未拥有文件的访问权时调用该方法。对应的异常将会作为参数传递给该方法。可以自行选择如何处理该异常；
+
+如果你不想实现 FileVisitor 接口中的所有方法，可以继承 `SimpleFileVisitor` 类，该类已经实现了 FileVisitor 接口，可以通过树访问所有文件且抛出 IOError，可以继承该类，然后实现自己想要实现的方法。
+
+下面是一个例子，继承该类然后打印文件树中的所有文件，打印的文件包括常规文件、符号链接、目录或者某些 "unspecified" 文件类型。它还会打印每个文件的字节数。
+
+```java
+static class PrintFiles extends SimpleFileVisitor<Path> {
+    
+    @Override
+    public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+        if (attrs.isSymbolicLink()) {
+            System.out.format("Symbolic link: %s ", file);
+        } else if (attrs.isRegularFile()) {
+            System.out.format("Regular file: %s ", file);
+        } else {
+            System.out.format("Other: %s ", file);
+        }
+        System.out.println("(" + attrs.size() + "bytes)");
+        return FileVisitResult.CONTINUE;
+    }
+
+    @Override
+    public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
+        System.out.format("Directory: %s%n", dir);
+        return FileVisitResult.CONTINUE;
+    }
+    
+    @Override
+    public FileVisitResult visitFileFailed(Path file, IOException exc) throws IOException {
+        System.err.println(exc);
+        return FileVisitResult.CONTINUE;
+    }
+
+}
+```
+
+### Kickstarting the Process
+
+当我们实现了 FileVisitor 接口，下面该如何通过它去访问文件树呢？可以使用 Files 类中的 `walkFileTree` 方法：
+
+- `walkFileTree(Path, FileVisitor)`；
+- `walkFileTree(Path, Set<FileeVisitOption>, int, FileVisitor)`；
+
+第一个方法只需要一个入口点和 FileVisitor 的实例即可，比如下面这样：
+
+```java
+Path startingDir = ...;
+PrintFiles pf = new PrintFiles();
+Files.walkFileTree(startingDir, pf);
+```
+
+第二个 walkFileTree 方法允许您额外指定访问级别数量的限制和一组 FileVisitOption 枚举，如果希望确保该方法遍历整个文件树，可以指定 `Integer.MAX_VALUE` 为最大深度参数。您可以指定 FileVisitOption 枚举 FOLLOW_LINKS，这表明应该遵循符号链接。
+
+类似下面这样：
+
+```java
+import static java.nio.file.FileVisitResult.*;
+
+Path startingDir = ...;
+
+EnumSet<FileVisitOption> opts = EnumSet.of(FOLLOW_LINKS);
+
+Finder finder = new Finder(pattern);
+Files.walkFileTree(startingDir, opts, Integer.MAX_VALUE, finder);
+```
+
+### 创建 FileVisitor 时的注意事项
+
+首先对文件树进行深度遍历，但是不能对访问子目录的迭代顺序做任何假设。
+
+如果您的程序将更改文件系统，则需要仔细考虑如何实现FileVisitor。
+
+（1）例如，如果正在编写递归删除文件的方法，则在删除目录本身之前先删除目录中的文件。在本例中，在 postVisitDirectory 方法中删除目录。
+
+（2）如果正在编写递归复制文件的方法，你可以在尝试复制文件之前在 preVisisDirectory 方法中创建目录。如果希望保留源目录的属性(类似于UNIX cp -p命令)，则需要在复制文件后在 postVisitDirectory 中执行此操作。参考 [Copy](https://docs.oracle.com/javase/tutorial/essential/io/examples/Copy.java) 代码；
+
+（3）如果正在编写搜索文件的方法，可以在 visitFile 方法中进行文件比对，此方法查找符合条件的所有文件，但不查找目录。如果希望同时找到文件和目录，还必须在 preVisitDirectory 或 postVisitDirectory 方法中进行比对。参考 [Find](https://docs.oracle.com/javase/tutorial/essential/io/examples/Find.java) 代码；
+
+（4）需要考虑遇到符号链接时的处理方案，比如要删除文件，仅删除符号链接是不太合适的，如果正在复制文件，复制符号链接是没有问题的。默认情况下 `walkFileTree` 方法不会遵循符号链接。
+
+visitFile 方法在遇到文件时调用，如果声明了 FOLLOW_LINKS 选项并且文件树种存在指向父目录的符号链接，此时会遇到循环遍历的情况，就会抛出 FileSystemLoopException 并将该异常作为参数传递给 visitFileFailed 方法。下面的代码展示这种情况（此代码在前面的 Copy 文件中）：
+
+```java
+@Override
+public FileVisitResult
+    visitFileFailed(Path file,
+        IOException exc) {
+    if (exc instanceof FileSystemLoopException) {
+        System.err.println("cycle detected: " + file);
+    } else {
+        System.err.format("Unable to copy:" + " %s: %s%n", file, exc);
+    }
+    return CONTINUE;
+}
+```
+
+这种情况只会在程序遵循符号链接时发生。
+
+### Controlling the Flow
+
+考虑这样一种场景：在遍历文件数的时候找到指定的目录，找到后就停止遍历，或者跳过特定的目录。
+
+FileVisitor 接口中的方法会返回 `FileVisitResult` 枚举常量值，您可以中止文件遍历过程或控制是否通过 FileVisitor 方法中返回的值访问目录：
+
+- `CONTINUE`：告诉文件遍历程序要继续执行；如果 `preVisitDirectory` 方法返回该值，则会访问该目录；
+- `TERMINATE`：立即终止文件遍历，当返回该值就不会遍历后面的文件；
+- `SKIP_SUBTREE`：当 `preVisitDirectory` 返回该值时，即将访问的目录及其子目录都会被跳过，这条分支就从文件树上被剪掉了；
+- `SKIP_SIBLINGS`：当 `preVisitDirectory` 返回该值，该目录将不会被访问，且 `postVisitDirectory` 方法也不会调用，也不会访问其他为被访问的兄弟目录，如果 `postVisitDirectory` 方法返回该值，其他兄弟目录也不会被访问。实际上，在指定的目录中不会再发生任何事情。
+
+下面的例子展示名为 SCCS 的目录将会被跳过：
+
+```java
+import static java.nio.file.FileVisitResult.*;
+
+public FileVisitResult
+     preVisitDirectory(Path dir,
+         BasicFileAttributes attrs) {
+    (if (dir.getFileName().toString().equals("SCCS")) {
+         return SKIP_SUBTREE;
+    }
+    return CONTINUE;
+}
+```
+
+在这个代码片段中，一旦找到一个特定的文件，文件名就会被打印到标准输出中，文件遍历就会结束:
+
+```java
+import static java.nio.file.FileVisitResult.*;
+
+// The file we are looking for.
+Path lookingFor = ...;
+
+public FileVisitResult
+    visitFile(Path file,
+        BasicFileAttributes attr) {
+    if (file.getFileName().equals(lookingFor)) {
+        System.out.println("Located file: " + file);
+        return TERMINATE;
+    }
+    return CONTINUE;
+}
+```
+
+### Examples
+
+The following examples demonstrate the file walking mechanism:
+
+- [`Find`](https://docs.oracle.com/javase/tutorial/essential/io/examples/Find.java) – Recurses a file tree looking for files and directories that match a particular glob pattern. This example is discussed in [Finding Files](https://docs.oracle.com/javase/tutorial/essential/io/find.html).
+- [`Chmod`](https://docs.oracle.com/javase/tutorial/essential/io/examples/Chmod.java) – Recursively changes permissions on a file tree (for POSIX systems only).
+- [`Copy`](https://docs.oracle.com/javase/tutorial/essential/io/examples/Copy.java) – Recursively copies a file tree.
+- [`WatchDir`](https://docs.oracle.com/javase/tutorial/essential/io/examples/WatchDir.java) – Demonstrates the mechanism that watches a directory for files that have been created, deleted or modified. Calling this program with the `-r` option watches an entire tree for changes. For more information about the file notification service, see [Watching a Directory for Changes](https://docs.oracle.com/javase/tutorial/essential/io/notification.html).
+
+## Finding Files
+
+如果用过 shell 脚本，你很有可能使用过模式匹配来定位文件。模式匹配使用特殊字符来创建模式，然后文件名可以与该模式进行比较。比如 `*` 匹配任何数量的字符，比如下面的脚本展示所有后缀为 .html 的文件：
+
+```shell
+ls *.html
+```
+
+`java.nio.file` 包提供了该功能的编程式支持，每个文件系统的实现都会提供一个 `PathMatcher`，可以通过 FileSystem 类的 `getPathMatcher(String)` 来获取文件系统的 PathMatcher。
+
+```java
+String pattern = ...;
+PathMatcher matcher =
+    FileSystems.getDefault().getPathMatcher("glob:" + pattern);
+```
+
+传递给 getPathMatcher 的字符串参数指定了语法风格和要匹配的模式，例子中声明语法风格是 glob，参考 [What is Glob？](https://docs.oracle.com/javase/tutorial/essential/io/fileOps.html#glob)
+
+Glob语法易于使用且灵活，但如果您愿意，也可以使用正则表达式或 regex 语法。要进一步了解 regex，可以参考 [Regular Expressions](https://docs.oracle.com/javase/tutorial/essential/regex/index.html) 章节。一些文件系统实现也可能支持其他语法。如果你想使用其他形式的基于字符串的模式匹配，你可以创建你自己的 PathMatcher 类。本小节中的示例使用 glob 语法。
+
+一旦创建好 PathMatcher 实例，就可以和文件进行匹配了，PathMatcher 是一个函数式接口，只有一个 matches 方法，它接收一个 Path 参数然后返回一个 boolean。
+
+```java
+PathMatcher matcher =
+    FileSystems.getDefault().getPathMatcher("glob:*.{java,class}");
+
+Path filename = ...;
+if (matcher.matches(filename)) {
+    System.out.println(filename);
+}
+```
+
+### 递归模式匹配
+
+搜索与特定模式匹配的文件与遍历文件树同时进行。
+
+看后面的 Find 类，它和 UNIX 的 find 命令有些类似，但是功能要少一些，您可以扩展此示例以包含其他功能。例如，UNIX 的 find 支持 -prune 参数以从搜索中排除整个子树，您可以通过在 preVisitDirectory 方法中返回 SKIP_SUBTREE 来实现该功能。
+
+```java
+import java.io.*;
+import java.nio.file.*;
+import java.nio.file.attribute.*;
+import static java.nio.file.FileVisitResult.*;
+import static java.nio.file.FileVisitOption.*;
+import java.util.*;
+
+
+public class Find {
+
+    public static class Finder
+        extends SimpleFileVisitor<Path> {
+
+        private final PathMatcher matcher;
+        private int numMatches = 0;
+
+        Finder(String pattern) {
+            matcher = FileSystems.getDefault()
+                    .getPathMatcher("glob:" + pattern);
+        }
+
+        // Compares the glob pattern against
+        // the file or directory name.
+        void find(Path file) {
+            Path name = file.getFileName();
+            if (name != null && matcher.matches(name)) {
+                numMatches++;
+                System.out.println(file);
+            }
+        }
+
+        // Prints the total number of
+        // matches to standard out.
+        void done() {
+            System.out.println("Matched: "
+                + numMatches);
+        }
+
+        // Invoke the pattern matching
+        // method on each file.
+        @Override
+        public FileVisitResult visitFile(Path file,
+                BasicFileAttributes attrs) {
+            find(file);
+            return CONTINUE;
+        }
+
+        // Invoke the pattern matching
+        // method on each directory.
+        @Override
+        public FileVisitResult preVisitDirectory(Path dir,
+                BasicFileAttributes attrs) {
+            find(dir);
+            return CONTINUE;
+        }
+
+        @Override
+        public FileVisitResult visitFileFailed(Path file,
+                IOException exc) {
+            System.err.println(exc);
+            return CONTINUE;
+        }
+    }
+
+    static void usage() {
+        System.err.println("java Find <path>" +
+            " -name \"<glob_pattern>\"");
+        System.exit(-1);
+    }
+
+    public static void main(String[] args)
+        throws IOException {
+
+        if (args.length < 3 || !args[1].equals("-name"))
+            usage();
+
+        Path startingDir = Paths.get(args[0]);
+        String pattern = args[2];
+
+        Finder finder = new Finder(pattern);
+        Files.walkFileTree(startingDir, finder);
+        finder.done();
+    }
+}
+```
+
+## Watching a Directory for Changes
+
+当我们通过多个编辑器编辑一个文件时，其中一个编辑器修改了该文件的内容，其他的编辑器会弹出一个提示框告诉你该文件被外部程序修改需要重新加载。又或者像 NetBeans IDE 会自动经默更新文件而不会通知你。
+
+这种功能叫做 "file change notification"，程序必须能够检测到文件系统上的相关目录发生了什么。一种方法是轮询文件系统以查找更改，但这种方法效率很低。它不能扩展到有数百个打开的文件或目录要监视的应用程序。
+
+`java.nio.file` 包提供了 file change notification API，叫做 `Watch Service API`，这个 API 允许您向监视服务注册一个目录(或多个目录)。注册时，你告诉服务你感兴趣的事件类型：file creating、file deleting 或者 file modification。当 Watch Service 检测到你感兴趣的事件发生时，会将其转发到前面注册的对应的处理器（类似回调）。已注册的处理器有一个线程 (或线程池) 专门用于监视它已注册的任何事件。当事件传入时，将根据需要处理它。
+
+本小节包括：
+
+- Watch Service 概览；
+- Try It Out；
+- Creating a Watch Service and Registering for Events；
+- Processing Events；
+- Retrieving the File Name；
+- When to Use and Not Use This API；
+
+### Watch Service 概览
+
+WatchService API 是相当低的级别，允许您自定义它，您可以按原样使用它，也可以选择在此机制之上创建高级 API，以便它适合您的特定需求。
+
+下面是实现 Watch Service 所需要的基本步骤：
+
+（1）为文件系统创建一个 WatchService 实例 watcher；
+
+（2）向 watcher 监视器注册我们要监听的目录，在注册目录的时候同时传递我们感兴趣的要监听的事件类型，注册完成会返回一个和目录关联的 WatchKey 实例；
+
+（3）写一个无限执行的循环代码，接收传入的事件，当发生该事件时，key 就会发出信号然后传给 watcher 的监听队列中；
+
+（4）从 watcher 队列中获取该 key，可以从 key 中获取文件的名称；
+
+（5）检索 key 关联的每个挂起的事件(可能有多个事件)并根据需要处理；
+
+（6）最后关闭 service：当线程结束或者调用 watch service 的 closed 方法时，watch service 就会关闭。
+
+WatchKeys 是线程安全的且可以和 `java.util.concurrent` 包一起使用，可以提供一个线程池用于提高性能。
+
+### 试一试
+
+因为这个 API 比较高级，在继续学习之前可以看看下面这个例子 WatchDir，它使用单线程处理所有事件；
+
+```java
+import java.nio.file.*;
+import static java.nio.file.StandardWatchEventKinds.*;
+import static java.nio.file.LinkOption.*;
+import java.nio.file.attribute.*;
+import java.io.*;
+import java.util.*;
+
+/**
+ * Example to watch a directory (or tree) for changes to files.
+ */
+
+public class WatchDir {
+
+    private final WatchService watcher;
+    private final Map<WatchKey,Path> keys;
+    private final boolean recursive;
+    private boolean trace = false;
+
+    @SuppressWarnings("unchecked")
+    static <T> WatchEvent<T> cast(WatchEvent<?> event) {
+        return (WatchEvent<T>)event;
+    }
+
+    /**
+     * Register the given directory with the WatchService
+     */
+    private void register(Path dir) throws IOException {
+        WatchKey key = dir.register(watcher, ENTRY_CREATE, ENTRY_DELETE, ENTRY_MODIFY);
+        if (trace) {
+            Path prev = keys.get(key);
+            if (prev == null) {
+                System.out.format("register: %s\n", dir);
+            } else {
+                if (!dir.equals(prev)) {
+                    System.out.format("update: %s -> %s\n", prev, dir);
+                }
+            }
+        }
+        keys.put(key, dir);
+    }
+
+    /**
+     * Register the given directory, and all its sub-directories, with the
+     * WatchService.
+     */
+    private void registerAll(final Path start) throws IOException {
+        // register directory and sub-directories
+        Files.walkFileTree(start, new SimpleFileVisitor<Path>() {
+            @Override
+            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs)
+                throws IOException
+            {
+                register(dir);
+                return FileVisitResult.CONTINUE;
+            }
+        });
+    }
+
+    /**
+     * Creates a WatchService and registers the given directory
+     */
+    WatchDir(Path dir, boolean recursive) throws IOException {
+        this.watcher = FileSystems.getDefault().newWatchService();
+        this.keys = new HashMap<WatchKey,Path>();
+        this.recursive = recursive;
+
+        if (recursive) {
+            System.out.format("Scanning %s ...\n", dir);
+            registerAll(dir);
+            System.out.println("Done.");
+        } else {
+            register(dir);
+        }
+
+        // enable trace after initial registration
+        this.trace = true;
+    }
+
+    /**
+     * Process all events for keys queued to the watcher
+     */
+    void processEvents() {
+        for (;;) {
+
+            // wait for key to be signalled
+            WatchKey key;
+            try {
+                key = watcher.take();
+            } catch (InterruptedException x) {
+                return;
+            }
+
+            Path dir = keys.get(key);
+            if (dir == null) {
+                System.err.println("WatchKey not recognized!!");
+                continue;
+            }
+
+            for (WatchEvent<?> event: key.pollEvents()) {
+                WatchEvent.Kind kind = event.kind();
+
+                // TBD - provide example of how OVERFLOW event is handled
+                if (kind == OVERFLOW) {
+                    continue;
+                }
+
+                // Context for directory entry event is the file name of entry
+                WatchEvent<Path> ev = cast(event);
+                Path name = ev.context();
+                Path child = dir.resolve(name);
+
+                // print out event
+                System.out.format("%s: %s\n", event.kind().name(), child);
+
+                // if directory is created, and watching recursively, then
+                // register it and its sub-directories
+                if (recursive && (kind == ENTRY_CREATE)) {
+                    try {
+                        if (Files.isDirectory(child, NOFOLLOW_LINKS)) {
+                            registerAll(child);
+                        }
+                    } catch (IOException x) {
+                        // ignore to keep sample readbale
+                    }
+                }
+            }
+
+            // reset key and remove from set if directory no longer accessible
+            boolean valid = key.reset();
+            if (!valid) {
+                keys.remove(key);
+
+                // all directories are inaccessible
+                if (keys.isEmpty()) {
+                    break;
+                }
+            }
+        }
+    }
+
+    static void usage() {
+        System.err.println("usage: java WatchDir [-r] dir");
+        System.exit(-1);
+    }
+
+    public static void main(String[] args) throws IOException {
+        // parse arguments
+        if (args.length == 0 || args.length > 2)
+            usage();
+        boolean recursive = false;
+        int dirArg = 0;
+        if (args[0].equals("-r")) {
+            if (args.length < 2)
+                usage();
+            recursive = true;
+            dirArg++;
+        }
+
+        // register directory and process its events
+        Path dir = Paths.get(args[dirArg]);
+        new WatchDir(dir, recursive).processEvents();
+    }
+}
+```
+
+### 创建 Watch Service 并 Registering for Events
+
+第一步是创建 Watch Service 实例，可以通过 File System 的  `newWatchService` 方法：
+
+```java
+WatchService watcher = FileSystems.getDefault().newWatchService();
+```
+
+然后向服务中注册多个 object，每个对象都需要实现 `Watchable` 接口才可以。Path 类已经实现了该接口，因此要监控的每个目录都注册为 Path 对象。
+
+与任何 Watchable 一样，Path 类实现了两个 register 方法。本小节使用 `register(WatchService, WatchEvent.Kind<?>...)`（三个参数的会接收 WatchEvent.Modifier，目前还没有实现，JDK 1.8）；
+
+向 watch service 注册一个对象后，你可以声明要监视的事件类型，可以使用 `StandardWatchEventKinds` ：
+
+- `ENTRY_CREATE`：创建了一个目录；
+- `ENTRY_DELETE`：删除了一个目录；
+- `ENTRY_MODIFY`：修改了一个目录；
+- `OVERFLOW`：表示事件可能已丢失或丢弃。您不必注册 OVERFLOW 事件来接收它。
+
+```java
+import static java.nio.file.StandardWatchEventKinds.*;
+
+Path dir = ...;
+try {
+    WatchKey key = dir.register(watcher,
+                           ENTRY_CREATE,
+                           ENTRY_DELETE,
+                           ENTRY_MODIFY);
+} catch (IOException x) {
+    System.err.println(x);
+}
+```
+
+### 处理 Events
+
+事件处理循环中的事件顺序如下：
+
+（1）获取一个 watch key，有三个方法：
+
+- `poll`：Returns a queued key, if available. Returns immediately with a `null` value, if unavailable.
+- `poll(long, Timeout)`：Returns a queued key, if one is available. If a queued key is not immediately available, the program waits until the specified time. The `TimeUnit` argument determines whether the specified time is nanoseconds, milliseconds, or some other unit of time.
+- `take`：Returns a queued key. If no queued key is available, this method waits.
+
+（2）处理和 key 关联的挂起的事件，从 pollEvents 方法获取 watch events list；
+
+（3）使用 `kind` 方法获取事件的类型，无论该 key 注册了什么事件，都有可能接收 OVERFLOW 事件，您可以选择处理或忽略它，但是您应该对它进行测试；
+
+（4）检索与事件关联的文件名。文件名作为事件的上下文存储，因此使用 context 方法检索它；
+
+（5）在处理了 key 的事件之后，您需要通过调用 `reset` 将密钥放回到 ready 状态。如果这个方法返回 false，key 不再有效，循环可以退出。这一步非常重要。如果调用 reset 失败，此 key 将不会接收任何进一步的事件。
+
+watch key 有一个状态。在任何给定的时间，它的状态可能是以下状态之一：
+
+- `Ready`：表示 key 可以接收事件，在 key 刚被创建的时候就是这个状态；
+- `Signaled`：表明 key 接收了至少一个事件且排成一队，一旦 key 处于 Signaled 状态，在调用 reset 方法之前它都不会回到 Ready 状态；
+- `Invalid`：声明 key 将不再被使用，当以下情况发生时 key 将被置为此种状态：
+  - 进程使用 cancel 方法使该 key 无效；
+  - 目录没有访问权限；
+  - watch service 关闭；
+
+下面是一个事件处理循环的代码示例，来自 [Email](https://docs.oracle.com/javase/tutorial/essential/io/examples/Email.java) 代码示例，它监听一个目录，等待新文件出现，当一个新的文件可用时，通过使用 `probeContentType(Path)` 方法检查它，以确定它是否是文本/纯文件。其目的是将文本/纯文件通过电子邮件发送到一个 alias，但实现细节留给读者。
+
+```java
+for (;;) {
+
+    // wait for key to be signaled
+    WatchKey key;
+    try {
+        key = watcher.take();
+    } catch (InterruptedException x) {
+        return;
+    }
+
+    for (WatchEvent<?> event: key.pollEvents()) {
+        WatchEvent.Kind<?> kind = event.kind();
+
+        // This key is registered only
+        // for ENTRY_CREATE events,
+        // but an OVERFLOW event can
+        // occur regardless if events
+        // are lost or discarded.
+        if (kind == OVERFLOW) {
+            continue;
+        }
+
+        // The filename is the
+        // context of the event.
+        WatchEvent<Path> ev = (WatchEvent<Path>)event;
+        Path filename = ev.context();
+
+        // Verify that the new
+        //  file is a text file.
+        try {
+            // Resolve the filename against the directory.
+            // If the filename is "test" and the directory is "foo",
+            // the resolved name is "test/foo".
+            Path child = dir.resolve(filename);
+            if (!Files.probeContentType(child).equals("text/plain")) {
+                System.err.format("New file '%s'" +
+                    " is not a plain text file.%n", filename);
+                continue;
+            }
+        } catch (IOException x) {
+            System.err.println(x);
+            continue;
+        }
+
+        // Email the file to the
+        //  specified email alias.
+        System.out.format("Emailing file %s%n", filename);
+        //Details left to reader....
+    }
+
+    // Reset the key -- this step is critical if you want to
+    // receive further watch events.  If the key is no longer valid,
+    // the directory is inaccessible so exit the loop.
+    boolean valid = key.reset();
+    if (!valid) {
+        break;
+    }
+}
+```
+
+### 获取文件名称
+
+通过 event context 获取文件名称，在 [Email](https://docs.oracle.com/javase/tutorial/essential/io/examples/Email.java) 中是这样做的：
+
+```java
+WatchEvent<Path> ev = (WatchEvent<Path>)event;
+Path filename = ev.context();
+```
+
+### When to Use and Not Use This API
+
+设计 Watch Service API 的目的是为某些应用程序提供 file chang events notification 的功能，比如编辑器或者 IDE，可能有许多打开的文件，需要确保这些文件与文件系统同步。它还非常适合用于监视目录的应用服务器，例如等待 .jsp 或 .jar 文件删除，以便部署它们。 
+
+此 API 不是为索引硬盘驱动器而设计的。大多数文件系统实现都具有对文件更改通知的本机支持。Watch Service API只是利用并增强了这种支持。但是，当文件系统不支持此机制时，Watch Service 将轮询该文件系统，等待事件的发生。
+
+
+
 
 
 
