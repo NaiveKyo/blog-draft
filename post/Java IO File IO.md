@@ -2237,16 +2237,158 @@ Path filename = ev.context();
 
 此 API 不是为索引硬盘驱动器而设计的。大多数文件系统实现都具有对文件更改通知的本机支持。Watch Service API只是利用并增强了这种支持。但是，当文件系统不支持此机制时，Watch Service 将轮询该文件系统，等待事件的发生。
 
+## Other Useful Methods
+
+除了前面的，还有一些有用的方法：
+
+- 判断文件的 MIME Type；
+- 默认的文件系统；
+- 路径分隔符；
+- 文件系统的文件存储；
+
+### 判断 MIME 类型
+
+调用 `probeContentType(Path path)` 方法：
+
+```java
+try {
+    String type = Files.probeContentType(filename);
+    if (type == null) {
+        System.err.format("'%s' has an" + " unknown filetype.%n", filename);
+    } else if (!type.equals("text/plain") {
+        System.err.format("'%s' is not" + " a plain text file.%n", filename);
+        continue;
+    }
+} catch (IOException x) {
+    System.err.println(x);
+}
+```
+
+注意当该方法返回 null 时表示无法判断文件的 MIME 类型；
+
+该方法的实现是基于特定平台的，有时候也并不可靠。获取文件的 content type  是基于文件系统的默认类型检测器（default file type detector）。比如说类型检测器判断 `.calss` 后缀的文件是 `application/x-java` 类型，但是也可能不正确；
+
+如果默认的检测器不能满足需求，你也可以提供定制的 `FileTypeDetector` 。
+
+### Default File System
+
+可以使用 `getDefault()` 方法获取默认的文件系统实现，同时返回的示例也可以继续以链式调用其他方法，如下代码所示：
+
+```java
+PathMatcher matcher =
+    FileSystems.getDefault().getPathMatcher("glob:*.*");
+```
+
+### Path String Separator
+
+POSIX 文件系统的路径分隔符是正斜杠：`/`，windows 系统则是反斜杠：`\`，其他的文件系统实现也可能采用其他字符，可以使用下面的方式获取默认的文件系统路径分隔符：
+
+```java
+String separator = File.separator;
+String separator = FileSystems.getDefault().getSeparator();
+```
+
+### File System's File Stores
+
+一个文件系统有一个或多个文件存储（file stores）来保存它的文件和目录，`file store` 代表底层存储设备，在 UNIX 系统中每个挂载的文件系统都由一个文件存储区表示，在 Windows 系统中，每个分卷都表示一个文件存储，比如 `C:`、`D:`，等等。
+
+检索文件系统的所有文件存储的列表，可以使用 `getFileStores` 方法，该方法返回一个 Iterable，因此我们可以使用增强 for 循环：
+
+```java
+for (FileStore store: FileSystems.getDefault().getFileStores()) {
+   ...
+}
+```
+
+如果要获取特定文件的文件存储，可以使用 Files 类的 `getFileStore` 方法：
+
+```java
+Path file = ...;
+FileStore store= Files.getFileStore(file);
+```
+
+## Legacy File I/O Code
+
+### Interoperability With Legacy Code
+
+在 Java SE 7 之前，`java.io.File` 包下的类是 Java file I/O 的基础，但是它有一些缺点：
+
+- 很多方法在出现错误时没有抛出异常，因此无法获得一些有用的信息。比如说删除某个文件时程序会收到 "delete fail" 的信息但是不能知道具体的信息，是文件不存在？还是用户没有权限？或者其他的原因；
+- `rename` 方法在不同平台上的行为不能保证一致；
+- 没有提供对符号链接的支持；
+- 对元数据管理没有提供太多的支持，比如文件权限、所有者以及其他安全属性；
+- 访问文件元数据效率低下；
+- 许多 File 方法不能支持大规模的使用。在服务器上请求大型目录列表可能会导致挂起。大目录还可能导致内存资源问题，从而导致拒绝服务；
+- 不可能编写能够递归遍历文件树并在存在循环符号链接时作出适当响应的可靠代码；
+
+也许您有使用 `java.io.File` 的遗留代码，并希望利用 `java.nio.file.Path` 功能，同时尽量减少对代码的影响。
+
+`java.io.File` 类提供了 `toPath` 方法，将老的 File 实例转换为 `java.nio.file.Path` 实例：
+
+```java
+Path input = file.toPath();
+```
+
+然后，您可以利用 Path 类可用的丰富特性集。
+
+比如说有这样的删除文件的代码：
+
+```java
+file.delete();
+```
+
+你可以修改这段代码来使用 Files.delete 方法，如下所示:
+
+```java
+Path fp = file.toPath();
+Files.delete(fp);
+```
+
+相反，`Path.toFile` 方法可以将 Path 对象构造为 `java.io.File` 对象。
+
+### Mapping java.io.File Functionality to java.nio.file
+
+因为在 Java SE 7 发行版中，文件 I/O 的 Java 实现已经完全重新架构,你不能用一个方法交换另一个方法。
+
+如果希望使用 `java.nio.file` 包提供的丰富功能，最简单的解决方案是使用前一节中建议的 toPath 方法。如果您不想使用这种方法，或者它不能满足您的需要，则必须重写文件 I/O 代码。
+
+这两个 API 之间不存在一一对应的关系，但下表让您大致了解 `java.io.File API` 中的哪些功能映射到 `java.nio.file API` 中，并告诉您在哪里可以获得更多信息。
+
+| java.io.File Functionality                                   | java.nio.file Functionality                                  | Tutorial Coverage                                            |
+| ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| `java.io.File`                                               | `java.nio.file.Path`                                         | [The Path Class](https://docs.oracle.com/javase/tutorial/essential/io/pathClass.html) |
+| `java.io.RandomAccessFile`                                   | The `SeekableByteChannel` functionality.                     | [Random Access Files](https://docs.oracle.com/javase/tutorial/essential/io/rafs.html) |
+| `File.canRead`, `canWrite`, `canExecute`                     | `Files.isReadable`, `Files.isWritable`, and `Files.isExecutable`. On UNIX file systems, the [Managing Metadata (File and File Store Attributes)](https://docs.oracle.com/javase/tutorial/essential/io/fileAttr.html) package is used to check the nine file permissions. | [Checking a File or Directory](https://docs.oracle.com/javase/tutorial/essential/io/check.html) [Managing Metadata](https://docs.oracle.com/javase/tutorial/essential/io/fileAttr.html) |
+| `File.isDirectory()`, `File.isFile()`, and `File.length()`   | `Files.isDirectory(Path, LinkOption...)`, `Files.isRegularFile(Path, LinkOption...)`, and `Files.size(Path)` | [Managing Metadata](https://docs.oracle.com/javase/tutorial/essential/io/fileAttr.html) |
+| `File.lastModified()` and `File.setLastModified(long)`       | `Files.getLastModifiedTime(Path, LinkOption...)` and `Files.setLastMOdifiedTime(Path, FileTime)` | [Managing Metadata](https://docs.oracle.com/javase/tutorial/essential/io/fileAttr.html) |
+| The `File` methods that set various attributes: `setExecutable`, `setReadable`, `setReadOnly`, `setWritable` | These methods are replaced by the `Files` method `setAttribute(Path, String, Object, LinkOption...)`. | [Managing Metadata](https://docs.oracle.com/javase/tutorial/essential/io/fileAttr.html) |
+| `new File(parent, "newfile")`                                | `parent.resolve("newfile")`                                  | [Path Operations](https://docs.oracle.com/javase/tutorial/essential/io/pathOps.html) |
+| `File.renameTo`                                              | `Files.move`                                                 | [Moving a File or Directory](https://docs.oracle.com/javase/tutorial/essential/io/move.html) |
+| `File.delete`                                                | `Files.delete`                                               | [Deleting a File or Directory](https://docs.oracle.com/javase/tutorial/essential/io/delete.html) |
+| `File.createNewFile`                                         | `Files.createFile`                                           | [Creating Files](https://docs.oracle.com/javase/tutorial/essential/io/file.html#createFile) |
+| `File.deleteOnExit`                                          | Replaced by the `DELETE_ON_CLOSE` option specified in the `createFile` method. | [Creating Files](https://docs.oracle.com/javase/tutorial/essential/io/file.html#createFile) |
+| `File.createTempFile`                                        | `Files.createTempFile(Path, String, FileAttributes<?>)`, `Files.createTempFile(Path, String, String, FileAttributes<?>)` | [Creating Files](https://docs.oracle.com/javase/tutorial/essential/io/file.html#createFile) [Creating and Writing a File by Using Stream I/O](https://docs.oracle.com/javase/tutorial/essential/io/file.html#createStream) [Reading and Writing Files by Using Channel I/O](https://docs.oracle.com/javase/tutorial/essential/io/file.html#channelio) |
+| `File.exists`                                                | `Files.exists` and `Files.notExists`                         | [Verifying the Existence of a File or Directory](https://docs.oracle.com/javase/tutorial/essential/io/check.html) |
+| `File.compareTo` and `equals`                                | `Path.compareTo` and `equals`                                | [Comparing Two Paths](https://docs.oracle.com/javase/tutorial/essential/io/pathOps.html#compare) |
+| `File.getAbsolutePath` and `getAbsoluteFile`                 | `Path.toAbsolutePath`                                        | [Converting a Path](https://docs.oracle.com/javase/tutorial/essential/io/pathOps.html#convert) |
+| `File.getCanonicalPath` and `getCanonicalFile`               | `Path.toRealPath` or `normalize`                             | [Converting a Path (`toRealPath`)](https://docs.oracle.com/javase/tutorial/essential/io/pathOps.html#convert) [Removing Redundancies From a Path (`normalize`)](https://docs.oracle.com/javase/tutorial/essential/io/pathOps.html#normal) |
+| `File.toURI`                                                 | `Path.toURI`                                                 | [Converting a Path](https://docs.oracle.com/javase/tutorial/essential/io/pathOps.html#convert) |
+| `File.isHidden`                                              | `Files.isHidden`                                             | [Retrieving Information About the Path](https://docs.oracle.com/javase/tutorial/essential/io/pathOps.html#info) |
+| `File.list` and `listFiles`                                  | `Path.newDirectoryStream`                                    | [Listing a Directory's Contents](https://docs.oracle.com/javase/tutorial/essential/io/dirs.html#listdir) |
+| `File.mkdir` and `mkdirs`                                    | `Files.createDirectory`                                      | [Creating a Directory](https://docs.oracle.com/javase/tutorial/essential/io/dirs.html#create) |
+| `File.listRoots`                                             | `FileSystem.getRootDirectories`                              | [Listing a File System's Root Directories](https://docs.oracle.com/javase/tutorial/essential/io/dirs.html#listall) |
+| `File.getTotalSpace`, `File.getFreeSpace`, `File.getUsableSpace` | `FileStore.getTotalSpace`, `FileStore.getUnallocatedSpace`, `FileStore.getUsableSpace`, `FileStore.getTotalSpace` | [File Store Attributes](https://docs.oracle.com/javase/tutorial/essential/io/fileAttr.html#store) |
 
 
 
+# 总结
 
+`java.io` 包下面含有很多类可以读写数据，大多数类都实现了 sequential access streams，顺序访问流大致可以分为两类：字节流（read and write bytes）、字符流（read and write Unicode characters）。每种流都有自己的特性，比如读写文件的流、读写数据时可以过滤数据的流或者对象序列化流；
 
+`java.nio.file` 包扩展了文件以及文件 I/O，这是非常全面综合的 API，其中的关键点如下所示：
 
-进度：
+- `Path` 类：包含操作 path 的方法；
+- `Files` 类：包含文件操作的方法，比如移动、复制、删除以及操作属性的方法；
+- `FileSystem` 类：包含很多可以获取文件系统信息的方法。
 
-- https://docs.oracle.com/javase/8/javase-books.htm
-- https://docs.oracle.com/javase/8/docs/
-- https://docs.oracle.com/javase/8/docs/technotes/guides/io/index.html
-- https://docs.oracle.com/javase/tutorial/essential/io/index.html
-- https://docs.oracle.com/javase/tutorial/essential/io/walk.html
+在 [Open JDK: NIO](https://openjdk.org/projects/nio/) 站点可以获得更多关于 NIO.2 的信息。该站点包含很多关于 NIO.2 的特性，比如说：multicasting（多点广播）、asynchronous I/O（异步非阻塞 I/O），以及自定义文件系统实现的资源。
