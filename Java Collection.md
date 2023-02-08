@@ -119,6 +119,165 @@ collection interfaces 被划分为两种：
 
 
 
+# API Specification
+
+包含集合框架的类和接口的带注释的大纲，以及到JavaDoc的链接。
+
+参考：https://docs.oracle.com/javase/8/docs/technotes/guides/collections/reference.html
+
+
+
+# Tutorial
+
+本小节参见：https://docs.oracle.com/javase/tutorial/collections/index.html
+
+主要介绍 Java 的集合框架，以及利用它们编写更简洁高效的程序；
+
+## Introduction
+
+集合 Collection 有时也叫做容器 Container，它将多个元素组合为一个元素。Collection 常用来存储、检索、操作甚至在聚集的元素中通信。
+
+### 什么是集合框架？
+
+collections framework 代表着一种统一的基础架构，主要用来表示和操作 collection。所有的集合框架都应该包括以下几部分：
+
+- Interfaces：表示 collection 的抽象数据类型。接口允许集合的不同实现有彼此独立的操作元素的行为。在面向对象语言中，接口通常呈层级结构；
+- Implementations：它们是 Interfaces 的具体实现。本质上它们就是可复用的数据结构；
+- Algorithms：能够执行有效计算的方法，比如在实现了 collection interfaces 的对象上进行元素的查询、排序操作。一般此种方法都是具有多态性的。本质上，算法是可以复用的功能函数。
+
+除了 Java 的集合框架外，最有名的莫过于 C++ 的 STL（Standard Template Library）和 Smalltalk 的 collection hierarchy。
+
+## Interfaces
+
+Java 集合框架中最核心的几个接口封装了集合的不同类型，如下表所示：
+
+（1）Collection 体系
+
+| 接口       | 子接口 | 子接口    |
+| ---------- | ------ | --------- |
+| Collection | Set    | SortedSet |
+|            | List   |           |
+|            | Queue  |           |
+|            | Deque  |           |
+
+（2）Map 体系
+
+| 接口 | 子接口    |
+| ---- | --------- |
+| Map  | SortedMap |
+
+- 注意 Map 并不是 Collection；
+- 所有的接口都支持泛型；
+
+具体描述：
+
+- `Collection`：collection 体系的根接口。一个 collection 表示一组 element 的集合。它给出了集合的通用定义；在 Java 平台中，没有该接口的直接实现，而是提供了继承它的一些子接口；
+- `Set`：不包含重复元素的集合；
+- `List`：有序的集合（有时也叫做 sequence），它可以存储相同的元素，并提供对 List 中的元素随机访问的能力（通过索引下标）；
+- `Queue`：一般存储将要被处理的多个元素。除了 Collection 默认的行为外，Queue 还提供了一些附加的插入、抽取和检视操作；
+
+通常队列（但不一定）以 FIFO（first-in，first-out）的方式对元素进行排序。优先级队列就是一种例外的情况，它根据提供的比较器或元素的自然顺序对元素进行排序。但是无论使用何种顺序，队列的头都是将调用 `remove` 或 `poll` 方法删除的元素。在 FIFO 队列中，所有新加入的元素都会被插入到队列的尾部。其他类型的队列可能使用不同的放置规则。但是每个 Queue 的实现都必须指定它的排序属性。
+
+- `Deque`：一般存储将要被处理的多个元素。除了 Collection 默认的行为外，Deque 还提供了一些附加的插入、抽取和检视操作；
+
+Deque 可以使用 FIFO（first-in，first-out）或 LIFO（last-in，first-out）在 Deque 中，所有新元素都可以在队列的两端插入、检索和删除。
+
+- `Map`：存储一组 key 和 value 映射关系的对象。Map 不能存储相同的 key，每个 key 可以关联至少一个对象；
+
+最后两个核心集合接口仅仅是 Set 和 Map 的排序版本：
+
+- `SortedSet`：按某种顺序保存元素的 Set。提供了几个额外的方法，这些方法利用了其有序的特性；
+- `SortedMap`：映射关系有序的 Map。它是 SortedSet 在 Map 中的体现。排序映射用于键/值对的自然排序集合，例如字典和电话簿；
+
+### The Collection Interface
+
+> （1）简介
+
+在集合框架中有这样一种构造形式，叫做 `conversion constructor`，例如下面这样，在不清楚 c 是什么具体类型的时候，可以通过此种构造方式将 c 中的所有元素存储到 List 中。
+
+```java
+Collection<String> c = ...;
+List<String> list = new ArrayList<>(c);
+```
+
+Collection 提供了集合的一些通用的操作。
+
+- 常规方法：`size()` 、`isEmpty()` 、`contains(Object element)` 、`add(E e)`、`remove(Object e)` 以及 `Iterator<E> iterator()`；
+- 操作整个集合的方法：`containsAll(Collection<?> c)`、`addAll(Collection<? extends E> c)`、`removeAll(Collection<?> c)`、`retainAll(Collection<?> c)` 以及 `clear()`；
+- 数组操作：`toArray()` 以及 `toArray(T[] a)`；
+
+在 JDK 8 和以后的版本，Collection 接口还引入了 `Stream<E> stream()` 和 `Stream<E> parallelStream()` 用于从集合上获取顺序流或并行流。
+
+> （2）遍历集合
+
+三种方式：
+
+- 使用聚合操作；
+
+在 JDK 8 和之后的版本中，迭代集合最好的方式就是获取流然后结合 Lambda 语法执行聚合操作，这样编写的代码更少，更具表现力。比如下面这样遍历一个形状集合，然后打印红色的对象：
+
+```java
+myShapesCollection.stream()
+.filter(e -> e.getColor() == Color.RED)
+.forEach(e -> System.out.println(e.getName()));
+```
+
+除此之外也可以使用并行流，在集合足够大且机器具有多个核心时，使用并行流的效率更高（底层使用 fork-join 框架并行切分任务，执行完毕后合并子任务结果）：
+
+```java
+myShapesCollection.parallelStream()
+.filter(e -> e.getColor() == Color.RED)
+.forEach(e -> System.out.println(e.getName()));
+```
+
+在 Stream API 中有很多方法，可以高效的操作集合，比如将某个元素集合转换为 String 集合然后拼接为一个由 "," 分隔的字符串：
+
+```java
+String joined = elements.stream()
+    .map(Object::toString)
+    .collect(Collectors.joining(", "));
+```
+
+甚至求和：
+
+```java
+int total = employees.stream()
+.collect(Collectors.summingInt(Employee::getSalary)));
+```
+
+这些只是您可以使用流和聚合操作所做的一些示例。
+
+- 使用增强 for 循环；
+
+```java
+for (Object o : collection)
+    System.out.println(o);
+```
+
+- 使用迭代器；
+
+迭代其接口：
+
+```java
+public interface Iterator<E> {
+    boolean hasNext();
+    E next();
+    void remove(); //optional
+}
+```
+
+迭代：
+
+```java
+static void filter(Collection<?> c) {
+    for (Iterator<?> it = c.iterator(); it.hasNext(); )
+        if (!cond(it.next()))
+            it.remove();
+}
+```
+
+
+
 
 
 进度：
@@ -126,3 +285,4 @@ collection interfaces 被划分为两种：
 - https://docs.oracle.com/javase/8/javase-books.htm
 - https://docs.oracle.com/javase/8/docs/
 - https://docs.oracle.com/javase/8/docs/technotes/guides/collections/index.html
+- https://docs.oracle.com/javase/tutorial/collections/interfaces/set.html
