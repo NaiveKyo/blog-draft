@@ -276,6 +276,137 @@ static void filter(Collection<?> c) {
 }
 ```
 
+### The Set Interface
+
+Set 就是不包含重复元素的 Collection。Set 接口中的方法都是从 Collection 继承的。只不过追加了禁止添加重复元素的限制。此外，Set 对 `equals` 和 `hashcode` 方法添加了更强的约束。如果两个 Set 实例包含相同的元素，则它们相同。
+
+Java 平台提供了三种 Set 的不同实现：HashSet、TreeSet 以及 LinkedHashSet。
+
+（1）HashSet 利用一个 hash table 来存储元素，性能最好，但是它不能保证插入元素的顺序；
+
+（2）TreeSet 使用红黑树来存储元素，根据存储的元素来进行排序，它比 HashSet 要慢很多；
+
+（3）LinkedHashSet 使用链表版本的 hash table 存储元素，根据元素插入时的顺序排序。和 HashSet 相比，只需要花费略高的代价就可以保证顺序。
+
+
+
+### The List Interface
+
+List 就是有序的 Collection（有时也叫序列）。List 中可以包含重复的元素除了继承自 Collection 接口的方法，List 接口包含以下特有的方法：
+
+- Positional access：List 通过元素的数值下标操作元素，提供 get、set、add、addAll 以及 remove 方法；
+- Search：在 List 中搜索某个元素，然后返回元素下标，搜索方法包括 indexOf、lastIndexOf；
+- Iteration：继承了 Iterator 接口，结合 List 序列的特性。通过 listIterator 方法提供此特性；
+- Range-view：sublist 方法为 List 提供 `range operation`；
+
+Java 平台提供了 List 的两个通用实现：
+
+（1）ArrayList，它的性能最好；
+
+（2）LinkedList 在特定情况下提供更好的性能；
+
+可以从元素的访问以及元素的插入删除来比较两者；
+
+在 Collections 工具类中提供了一些 List 的算法，它们都支持多态：
+
+- `sort`：使用归并排序算法排序 List，它提供快速的稳定的排序（稳定排序是指排序前后不改变相等元素的前后位置）；
+
+- `shuffle`：随机排列 List 中的元素；
+- `reverse`：使 List 中的元素逆序；
+- `rotate`：将 List 中的所有元素旋转指定的距离；
+- `swap`：交换 List 中两个元素的位置；
+- `replaceAll`：用另一个指定值替换所有出现的指定值；
+- `fill`：用指定的值覆盖 List 中的每个元素；
+- `copy`：将源列表复制到目标列表中；
+- `binarySearch`：使用二分查找算法在有序列表中搜索元素；
+- `indexOfSubList`：返回一个 List 中与另一个 List 相等的第一个子列表的索引；
+- `lastIndexOfSubList`：返回一个 List 中与另一个 List 相等的最后一个子列表的索引。
+
+### The Queue Interface
+
+Queue 就是存储待处理元素的集合。除了 Collectino 定义的方法，Queue 还提供了一些特有的 insertion、removal and inspection 的操作。
+
+```java
+public interface Queue<E> extends Collection<E> {
+    E element();
+    boolean offer(E e);
+    E peek();
+    E poll();
+    E remove();
+}
+```
+
+每个 Queue 方法有两种格式：
+
+（1）当操作执行失败时抛出异常；
+
+（2）当操作执行失败时排除特定指；（该值根据方法不同，返回 null 或者 false）；
+
+如下表所示：
+
+| 操作类型 | 抛出异常  | 返回特定值 |
+| -------- | --------- | ---------- |
+| Insert   | add(e)    | offer(e)   |
+| Remove   | remove()  | poll()     |
+| Examine  | element() | peek()     |
+
+一般来说 Queue 采取 FIFO 模式，特殊的情况就是优先级队列，它根据元素值进行排序。但是无论顺序是怎么样的，调用 `remove` 或者 `poll` 方法都会返回队列的头结点。FIFO 模式下的 Queue，新的元素将会被追加到队列的末尾；而其他类型的 Queue 也许会采用不同的存储规则。每个 Queue 的实现都必须指定其排序的规则；
+
+Queue 的实现通常不允许插入 null 元素，而 LinkedList 是一个例外，它也是 Queue 的一种实现，但是处于历史原因，它可以存储 null 元素，但是开发者应该注意避免这种情况，因为 poll 和 peek 方法返回值中 null 具有特殊意义。
+
+Queue 的实现通常没有基于存储的元素来重写 `equals` 和 `hashcode` 方法，而是选择保留继承自 Object 的这两个方法。
+
+Queue 接口没有定义阻塞队列方法，而阻塞队列方法在并发编程中很常见。这些方法在接口  `java.util.concurrent.BlockingQueue` 中定义，用于等待元素出现或等待空间可用，它扩展了 Queue。
+
+下面这个例子展示了利用优先级队列对集合进行排序，仅作演示优先级队列的特殊行为，集合排序有更好的方法：
+
+```java
+static <E> List<E> heapSort(Collection<E> c) {
+    // 这里的优先级队列基于 二叉平衡堆 实现
+    Queue<E> queue = new PriorityQueue<E>(c);
+    List<E> result = new ArrayList<E>();
+
+    while (!queue.isEmpty())
+        result.add(queue.remove());
+
+    return result;
+}
+```
+
+
+
+### The Deque Interface
+
+Deque 是双端队列。双端队列是元素的线性集合，支持在两个端点插入和删除元素。Deque 接口是一种比 Stack 和 Queue 更丰富的抽象数据类型，因为它同时实现了堆栈和队列。Deque 接口定义了访问 Deque 实例两端元素的方法，包括插入、删除以及评估元素。像 ArrayDeque 和 LinkedList 这样的预定义类实现了 Deque 接口。
+
+注意 Deque 既可以采用 LIFO 模式的 stack，也可以采用 FIFO 的 queue，Deque 接口提供的方法可以分为三部分：
+
+（1）Insert
+
+`addFirst` 和 `offerFirst` 在 Deque 的首部插入元素，`addLast` 和 `offerLast` 则在 Deque 的末端插入元素，当 Deque 元素数量收到限制的时候，使用 `offerFirst` 和 `offerLast` 方法更好，因为 `addFirst` 和 `addLast` 方法在双端队列容量满了的情况下插入元素会失败并抛出异常；
+
+（2）Remove
+
+`removeFirst` 和 `pollFirst` 从 Deque 的首部移除元素，`removeLast` 和 `removeLast` 在 Deque 的尾部移除元素，当双端队列是空的时候，`pollXxx` 方法会返回 null，而 `removeXxx` 方法则会抛出异常；
+
+（3）Retrieve
+
+`getFirst` 和 `peekFirst` 查看 Deque 的第一个元素，它们不会从 Deque 中移除对应的元素。类似的 `getLast` 和 `peekLast` 查看 Deque 的最后一个元素。`getFirst` 和 `getLast` 在 Deque 是空的时候会抛出异常，而另外两个方法则返回 null；
+
+这 12 个用于插入、移除以及检索 Deque 元素的方法如下表所示：
+
+| 操作类型 | Deque 的首部           | Deque 的尾部         |
+| -------- | ---------------------- | -------------------- |
+| Insert   | addFirst、offerFirst   | addLast、offerLast   |
+| Remove   | removeFirst、pollFirst | removeLast、pollLast |
+| Examine  | getFirst、peekFirst    | getLast、peekLast    |
+
+除了这些插入、删除和检查 Deque 实例的基本方法之外，Deque 接口也有一些预定义的方法。其中有一个 `removeFirstOccurrence` 方法，如果指定元素存在于 Deque 实例中，此方法将删除第一个检索到的该元素，如果该元素不存在，Deque 实例不受影响。另一个类似的方法是 `removeLastOccurrence`；
+
+这两个方法的返回值是 boolean，如果双端队列中存在指定的元素则返回 true，反之则是 false。
+
+### The Map Interface
+
 
 
 
@@ -285,4 +416,4 @@ static void filter(Collection<?> c) {
 - https://docs.oracle.com/javase/8/javase-books.htm
 - https://docs.oracle.com/javase/8/docs/
 - https://docs.oracle.com/javase/8/docs/technotes/guides/collections/index.html
-- https://docs.oracle.com/javase/tutorial/collections/interfaces/set.html
+- https://docs.oracle.com/javase/tutorial/collections/interfaces/map.html
