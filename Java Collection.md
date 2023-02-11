@@ -407,6 +407,89 @@ Deque 是双端队列。双端队列是元素的线性集合，支持在两个�
 
 ### The Map Interface
 
+Map 是一种保存 keys 和 values 映射关系的对象。map 对象不能保存相同的 key：但是一个 key 却可以映射至少一个对象。它是数学模型中 "函数" 的抽象。Map 接口定义了 map 的基础操作（比如：put、get、remove、containsKey，containsValue，size 以及 empty），大量数据操作（比如 putAll、clear），以及集合视图（比如 keySet、entrySet and values）。
+
+Java 平台提供了 Map 的三种通用实现：HashMap、TreeMap 以及 LinkedHashMap。它们的行为和表现类似于 HashSet、TreeSet 以及 LinkedHashSet。
+
+在学习 Map 的更多细节之前，先来了解一下 JDK 8 新增的集合聚合操作，将集合元素转换为 Map：
+
+```java
+// Group employees by department
+Map<Department, List<Employee>> byDept = employees.stream()
+.collect(Collectors.groupingBy(Employee::getDepartment));
+```
+
+```java
+// Compute sum of salaries by department
+Map<Department, Integer> totalByDept = employees.stream()
+.collect(Collectors.groupingBy(Employee::getDepartment,
+Collectors.summingInt(Employee::getSalary)));
+```
+
+```java
+// Partition students into passing and failing
+Map<Boolean, List<Student>> passingFailing = students.stream()
+.collect(Collectors.partitioningBy(s -> s.getGrade()>= PASS_THRESHOLD));
+```
+
+```java
+// Classify Person objects by city
+Map<String, List<Person>> peopleByCity
+         = personStream.collect(Collectors.groupingBy(Person::getCity));
+```
+
+```java
+// Cascade Collectors 
+Map<String, Map<String, List<Person>>> peopleByStateAndCity
+  = personStream.collect(Collectors.groupingBy(Person::getState,
+  Collectors.groupingBy(Person::getCity)))
+```
+
+这只是一小部分例子，更多详情参考 [Aggregation Operation](https://docs.oracle.com/javase/tutorial/collections/streams/index.html)
+
+### Object Ordering
+
+假设现在有一个 List （只有一个元素：1），可以这样对其排序：
+
+```java
+Collections.sort(l);
+```
+
+如果 List 包含 String 类型的元素，调用上述方法则所有元素按照字母顺序升序排列。如果 List 中包含 Date 元素，则会按照时间升序，为什么会这样？因为 String 和 Date 都实现了 `Comparable` 接口，实现了该接口的类都必须为自己提供一个 `natural ordering`，这样这个类的实例就可以按照该顺序自动排序了。
+
+下表展示了 Java 平台中实现了 Comparable 接口的一些重要的类：
+
+| Class        | Natural Ordering                           |
+| ------------ | ------------------------------------------ |
+| Byte         | 有符号数值；                               |
+| Character    | 无符号数值；                               |
+| Long         | 有符号数值；                               |
+| Integer      | 有符号数值；                               |
+| Short        | 有符号数值；                               |
+| Double       | 有符号数值；                               |
+| Float        | 有符号数值；                               |
+| BigInteger   | 有符号数值                                 |
+| BigDecimal   | 有符号数值                                 |
+| Boolean      | Boolean.FALSE < Boolean.True               |
+| File         | 依据文件系统中该 File 的 Path 按字典顺序； |
+| String       | 字典序；                                   |
+| Date         | 按发生时间顺序；                           |
+| CollationKey | 特定于语言环境的词典序；                   |
+
+看看 Comparable 接口的定义：
+
+```java
+public interface Comparable<T> {
+    public int compareTo(T o);
+}
+```
+
+`compareTo` 方法将接口的对象参数和特定的对象进行比较：
+
+- 当接收对象参数 less than 特定对象时，返回负数；
+- 当接收对象参数 equal to 特定对象时，返回 0；
+- 当接收对象参数 greater than 特定对象时，返回正数；
+
 
 
 
@@ -416,4 +499,5 @@ Deque 是双端队列。双端队列是元素的线性集合，支持在两个�
 - https://docs.oracle.com/javase/8/javase-books.htm
 - https://docs.oracle.com/javase/8/docs/
 - https://docs.oracle.com/javase/8/docs/technotes/guides/collections/index.html
-- https://docs.oracle.com/javase/tutorial/collections/interfaces/map.html
+- https://docs.oracle.com/javase/tutorial/collections/index.html
+- https://docs.oracle.com/javase/tutorial/collections/interfaces/order.html
