@@ -490,7 +490,674 @@ public interface Comparable<T> {
 - 当接收对象参数 equal to 特定对象时，返回 0；
 - 当接收对象参数 greater than 特定对象时，返回正数；
 
+前面提到了 `java.util.Comparable` 接口，下面是一个例子：
 
+```java
+import java.util.*;
+
+public class Name implements Comparable<Name> {
+    private final String firstName, lastName;
+
+    public Name(String firstName, String lastName) {
+        if (firstName == null || lastName == null)
+            throw new NullPointerException();
+        this.firstName = firstName;
+        this.lastName = lastName;
+    }
+
+    public String firstName() { return firstName; }
+    public String lastName()  { return lastName;  }
+
+    public boolean equals(Object o) {
+        if (!(o instanceof Name))
+            return false;
+        Name n = (Name) o;
+        return n.firstName.equals(firstName) && n.lastName.equals(lastName);
+    }
+
+    public int hashCode() {
+        return 31 * firstName.hashCode() + lastName.hashCode();
+    }
+
+    public String toString() {
+		return firstName + " " + lastName;
+    }
+
+    public int compareTo(Name n) {
+        int lastCmp = lastName.compareTo(n.lastName);
+        return (lastCmp != 0 ? lastCmp : firstName.compareTo(n.firstName));
+    }
+}
+```
+
+这个类保存人的名字，但是有一些小小的限制：仅支持 firstName 和 lastName，而且没有考虑国际化，但是该例展示了以下几个重要的地方：
+
+- `Name` 的对象是不可变的。在所有其他条件相同的情况下，不可变类型是最好的选择，特别是对于将用作 set 中的元素或 map 中的键的对象。对于此类集合，如果在遍历它们的同时修改了元素，就会抛出异常；
+- 构造器中对 null 进行了判断，这样可以确保所有的对象都是同样的格式，不会抛出 NPE；
+- 重写了 `hashcode` 方法。对于任何重写了 `equals` 方法的类，重写 hashcode 是必不可少的。（因为 `Equal objects must have equal hash codes`，相同的对象必定拥有相同的 hashcode）；
+- 对于 `equals` 方法，如果接收的参数对象是 null 或者和当前类实例类型匹配，就会返回 false。此时调用 `compareTo` 方法也会抛出运行时异常；
+- 重写 `toString` 方法是为了提供更好的可阅读性。Collection 的 toString 方法其实是调用集合存储的元素的 toString 方法。
+
+前面的 Comparable 接口为类提供了自然排序方式，如果我们要为某个类提供除此之外的排序方式，可以通过 `java.util.Comparator` 接口（是一种封装了 ordering 的对象）。
+
+```java
+public interface Comparator<T> {
+    int compare(T o1, T o2);
+}
+```
+
+compare 方法会返回：负数、0、整数，分别对应 o1 less than o2，o1 equal to o2，o1 greater than o2。如果接收的参数不合适，该方法会抛出 ClassCastException。
+
+其他行为和 compareTo 方法几乎一致，但是需要注意的是比较的两个元素，compareTo 是接收参数和自身比较，而 compare 是参数 1 和参数 2 比较。
+
+`Comparator` 适合为 List 排序，但是它有一个缺点：它不能用于有序集合，比如 TreeSet。因为它提供的排序方式不能和 equals 方法一致。这就意味着，Comparator 判断相同的对象，调用 equals 方法不一定相同。
+
+要解决这个问题也很简单，只需要调整一下 Comparator 比较的具体逻辑，让其兼容 equals 方法就可以了。
+
+### The SortedSet Interface
+
+SortedSet 是一种元素按照某种顺序的 Set。在构造的时候可以通过传递相关参数控制是使用元素自身的自然顺序还是通过 Comparator 提供的顺序。
+
+除了 Set 提供的基本操作外，SortedSet 还定义了以下几种操作：
+
+- Range view（范围操作）：允许对有序 set 做任何范围操作；
+- Endpoints：返回有序集合的头部或尾部元素；
+- Comparator access：如果存在有序集合采用的比较器，则返回该 Comparator；
+
+```java
+public interface SortedSet<E> extends Set<E> {
+    // Range-view
+    SortedSet<E> subSet(E fromElement, E toElement);
+    SortedSet<E> headSet(E toElement);
+    SortedSet<E> tailSet(E fromElement);
+
+    // Endpoints
+    E first();
+    E last();
+
+    // Comparator access
+    Comparator<? super E> comparator();
+}
+```
+
+### The SortedMap Interface
+
+SortedMap 是一种 entries 有序的 Map。在构建实例时可以通过传递参数选择是使用 key 的自然顺序，还是提供一个 Comparator。
+
+SortedMap 为基础的 Map 附加了以下操作：
+
+- Range view；任意范围操作；
+- Endpoints：返回 SortedMap 的第一个或最后一个 key；
+- Comparator access：返回可能存在的 Comparator；
+
+```java
+public interface SortedMap<K, V> extends Map<K, V>{
+    Comparator<? super K> comparator();
+    SortedMap<K, V> subMap(K fromKey, K toKey);
+    SortedMap<K, V> headMap(K toKey);
+    SortedMap<K, V> tailMap(K fromKey);
+    K firstKey();
+    K lastKey();
+}
+```
+
+### Summary of Interfaces
+
+Java Collections Framework 有以下核心接口，可以分为两种体系：
+
+（1）第一种体系以 Collection 接口为根，衍生出 Set、List 以及 Queue；
+
+- Set 不允许重复元素，且 null 元素只能存一个；
+- List 允许存储重复元素，可以准确控制每个元素；
+- Queue 中的元素通常是 FIFO 的；
+- Deque 中的元素通常允许 FIFO 或 LIFO；
+
+（2）第二种体系以 Map 接口为根，存储 key 和 value 的映射关系；
+
+- SortedMap 将 key-value pairs 以特定顺序存储；
+
+这些接口允许集合对元素的操作细节独立于规范。
+
+## Aggregate Operations
+
+可以先回顾一下 Java 的 [Lambda Expressions](https://docs.oracle.com/javase/tutorial/java/javaOO/lambdaexpressions.html) 和 [Method References](https://docs.oracle.com/javase/tutorial/java/javaOO/methodreferences.html)
+
+考虑这样的场景，假设构建一个社交网络 app，对于用户信息可能是这样抽象的：
+
+```java
+public class Person {
+
+    public enum Sex {
+        MALE, FEMALE
+    }
+
+    String name;
+    LocalDate birthday;
+    Sex gender;
+    String emailAddress;
+    
+    // ...
+
+    public int getAge() {
+        // ...
+    }
+
+    public String getName() {
+        // ...
+    }
+}
+```
+
+下面是使用增强 for 循环打印用户的姓名信息：
+
+```java
+for (Person p : roster) {
+    System.out.println(p.getName());
+}
+```
+
+使用聚合操作打印：
+
+```java
+roster
+    .stream()
+    .forEach(e -> System.out.println(e.getName());
+```
+
+下面介绍两类主题：
+
+- Pipelines and Streams（管道和流）；
+- 迭代器和聚合操作的不同；
+
+### Pipelines and Streams
+
+pipeline 是一系列聚合操作的集合。
+
+```java
+roster
+    .stream()
+    .filter(e -> e.getGender() == Person.Sex.MALE)
+    .forEach(e -> System.out.println(e.getName()));
+```
+
+等价于 for-each：
+
+```java
+for (Person p : roster) {
+    if (p.getGender() == Person.Sex.MALE) {
+        System.out.println(p.getName());
+    }
+}
+```
+
+pipeline 包含以下几个组件：
+
+- A source（来源）：可以是集合、数组、生成器函数或者 I/O channel；
+- Zero or more `intermediate operations`（可能存在的多个中间操作）：一个中间操作，比如 filter，会产生新的流；
+  - 一个 stream 是元素的序列，和集合不一样，它不是存储元素的数据结构，stream 通过 pipeline 运输来自 source 的 values。
+- A `terminal operation`：终结操作，比如 forEach，会产生 non-stream 结果，比如一个原始数据类型（like a double value），或者什么值都没有（like forEach）。在上面的例子中，传给 forEach 的参数是一个 lambda expression，它会在每一个对象上调用 getName 方法，而 Java runtime 和 compiler 会自动推断该对象是 Person 类型的实例。
+
+下面的例子计算年龄平均值：
+
+```java
+double average = roster
+    .stream()
+    .filter(p -> p.getGender() == Person.Sex.MALE)
+    .mapToInt(Person::getAge)
+    .average()
+    .getAsDouble();
+```
+
+### Differences Between Aggregate Operations and Iterators
+
+一个聚合操作，比如 forEach，看起来和迭代器类似，但是有以下不同之处：
+
+- They use internal iteration：聚合操作中没有类似 next 的方法指示要处理集合的下一个元素。
+  - 通过 `internal delegation` 应用程序会确定要处理的集合是什么类型，而 JDK 则会决定要如何去迭代这个集合；
+  - 通过 `external iteration` 应用程序会决定要如何迭代指定类型的集合；
+  - 但是，外部迭代只能按顺序遍历集合的元素，内部迭代则没有这个限制。它可以更容易地利用并行计算的优势，这包括将一个问题划分为子问题，同时解决这些问题，然后将子问题的解决结果结合起来。
+- They process elements from a stream：聚合操作在流中处理元素，而不是直接处理集合本身，因此，它们也被称为 `stream operations`；
+- They support behavior as parameters：聚合操作可以接收 lambda expression 作为参数。这样我们就可以为该聚合操作定制具体的行为。
+
+### Reduction
+
+前面有个计算平均值的例子：
+
+```java
+double average = roster
+    .stream()
+    .filter(p -> p.getGender() == Person.Sex.MALE)
+    .mapToInt(Person::getAge)
+    .average()
+    .getAsDouble();
+```
+
+在 JDK 中流操作有这样一类终结操作（比如 average、sum、min、max 以及 count），此类操作会合并流中所有内容返回一个 value。这种操作也叫做 `reduction operations`。
+
+除了返回单个值的，JDK 也提供返回一个集合的 reduction operations。
+
+下面介绍：
+
+- The Stream.reduce Method；
+- The Stream.collect Method；
+
+#### The Stream.reduce Method
+
+[Stream.reduce](https://docs.oracle.com/javase/8/docs/api/java/util/stream/Stream.html#reduce-T-java.util.function.BinaryOperator-) 是一种通用的归约操作。参考下面的例子用于计算年龄和：
+
+```java
+Integer totalAge = roster
+    .stream()
+    .mapToInt(Person::getAge)
+    .sum();
+```
+
+然后是等价的归约操作：
+
+```java
+Integer totalAgeReduce = roster
+   .stream()
+   .map(Person::getAge)
+   .reduce(
+       0,
+       (a, b) -> a + b);
+```
+
+reduce 方法接收两个参数：
+
+- identity：如果 stream 是空的，该参数就会作为默认的结果返回，否则作为归约操作的初始值；
+- accumulator：该函数接收两个参数，它们是归约操作中要归约的内容，同时也会作为流的下一个元素，继续和后面的元素进行归约，最终会归约为一个结果。
+
+reduce 操作总会返回一个新的值。但是，累加器函数也会在每次处理流的元素时返回一个新值。假设您希望将流的元素减少为更复杂的对象，例如集合。这可能会影响应用程序的性能。如果 reduce 操作涉及到向集合中添加元素，那么每次累加器函数处理一个元素时，它都会创建一个包含该元素的新集合，这是低效的。如果使用 `Stream.collect` 会更高效。
+
+#### The Stream.collect Method
+
+reduce 方法在处理元素的同时也会创建一个新的元素，和它不同的是 collect 方法可以修改、改变一个已经存在的 value；
+
+考虑这样一种场景，要计算流中所有元素的平均值，此时我们需要两种数据：所有元素的数量以及它们的和。但是和 reduce 以及其他归约函数一样，collect 也只会返回一个 value，但是它可以创建一种新的包含所有成员变量的数据类型，并且同时保持跟踪成员的数量和它们的和。参考下面的例子：
+
+```java
+class Averager implements IntConsumer
+{
+    private int total = 0;
+    private int count = 0;
+        
+    public double average() {
+        return count > 0 ? ((double) total)/count : 0;
+    }
+        
+    public void accept(int i) { total += i; count++; }
+    public void combine(Averager other) {
+        total += other.total;
+        count += other.count;
+    }
+}
+```
+
+下面的 pipeline 使用 Averager 类和 collect 方法来计算平均值：
+
+```java
+Averager averageCollect = roster.stream()
+    .filter(p -> p.getGender() == Person.Sex.MALE)
+    .map(Person::getAge)
+    .collect(Averager::new, Averager::accept, Averager::combine);
+                   
+System.out.println("Average age of male members: " +
+    averageCollect.average());
+```
+
+例子中的 collect 操作接收三个参数：
+
+- supplier：supplier 是一个工厂方法用来创建一个新的实例。在 collect 操作中，它创建归约结果的容器，也就是 Averager 实例；
+- accumulator：累加器函数将流中的元素合并到结果容器中。在本例中在 Averager 上的合并操作是这样的：递增 count 值，同时将新增累加到 total 上；
+- combiner：组合器函数接收两个结果容器并合并它们的内容。在本例中，它将新的 Averager 中的值累加到已有的 Averager 结果容器中。
+
+有以下注意点：
+
+- supplier 是一个 lambda expression（或者方法引用）而不是一个值；
+- accumulator 和 combiner 函数不会返回值；
+- 可以在并行流中使用 collect 操作。（在 parallel stream 中调用 collect 方法，JDK 会自动创建新的现在调用 combiner function 创建新对象，因此不必担心同步问题）；
+
+除了例子中这种计算平均值的方式，JDK 也提供了 average 操作，只不过例子中定制化程度比较高，可以根据实际情况选择使用。
+
+下面展示 collect 操作：
+
+```java
+List<String> namesOfMaleMembersCollect = roster
+    .stream()
+    .filter(p -> p.getGender() == Person.Sex.MALE)
+    .map(p -> p.getName())
+    .collect(Collectors.toList());
+```
+
+该例子中 collect 接收一个 Collector 参数，该参数封装了一个函数，和前面的 collect 接收的参数一样：supplier、accumulator 和 combiner。
+
+`java.util.stream.Collectors` 工具类提供了很多拥有的 reduction operations，例如，将元素积累到集合中，并根据各种标准汇总元素。这些归约操作返回类 Collector 的实例，因此您可以将它们用作收集操作的参数。
+
+以下示例按性别对成员进行分组：
+
+```java
+Map<Person.Sex, List<String>> namesByGender =
+    roster
+        .stream()
+        .collect(
+            Collectors.groupingBy(
+                Person::getGender,                      
+                Collectors.mapping(
+                    Person::getName,
+                    Collectors.toList())));
+```
+
+groupingBy 操作在例子中接收两个参数，一个分类器函数和一个 Collector 实例（叫做 `downstream collector`），这是Java运行时应用于另一个收集器的结果的收集器。因此，生成的流只包含成员的名称。
+
+如果一个 pipeline 包含至少一个 downstream collector，就叫做 `multilevel reduction`；（多级归约）。
+
+```java
+Map<Person.Sex, Integer> totalAgeByGender =
+    roster
+        .stream()
+        .collect(
+            Collectors.groupingBy(
+                Person::getGender,                      
+                Collectors.reducing(
+                    0,
+                    Person::getAge,
+                    Integer::sum)));
+```
+
+该例中的 reduce 操作接收三个参数：
+
+- identity：和 Stream.reduce 操作一样，identity 参数既是初始值也是默认值；
+- mapper：reducing 操作对流中所有元素使用该映射函数；
+- operation：这个 operation function 用来归约上面的 mapped values。
+
+### Parallelism
+
+并行计算包括将一个问题划分为多个子问题，同时对子问题求解（在并行处理中，每个子问题都在单独的线程中处理），然后合并所有子问题的解，最终求得原始问题的解。Java SE 提供了 [fork/join framework](https://docs.oracle.com/javase/tutorial/essential/concurrency/forkjoin.html) 用于更方便的实现并行计算。但是，使用该框架时必须指定划分子问题的方式，通过聚合操作，Java runtime 可以处理 partitioning 并且 combining 所有结果。
+
+使用并行流处理集合的一个难点是集合并不是 thread-safe 的，这就意味着如果没有引入 [thread interference](https://docs.oracle.com/javase/tutorial/essential/concurrency/interfere.html) 和 [memory consistency errors](https://docs.oracle.com/javase/tutorial/essential/concurrency/memconsist.html) 时，多个线程是无法同时操作同一个集合的。Java 的集合框架提供了集合的 [synchronization wrappers](https://docs.oracle.com/javase/tutorial/collections/implementations/wrapper.html)，它为集合添加了自动同步处理使其线程安全。但是同步也会导致 [thread contention](https://docs.oracle.com/javase/tutorial/essential/concurrency/sync.html#thread_contention)。开发者应当注意避免线程竞争，因为它会阻止并行计算。聚合操作和并行流允许开发者在 non-thread-safe 的集合上实现并行性，当然前提是不会涉及到修改集合。
+
+要注意有时候并行计算并不比串行计算更快，在拥有大数据量以及多核时采用并行计算效率更高，可以根据实际情况选择。
+
+本小节介绍以下内容：
+
+- Executing Streams in Parallel；（并行流）
+- Concurrent Reduction；（并发归约）
+- Ordering；（排序）
+- Side Effects：（副作用）
+  - Laziness；（惰性）
+  - Interference；（干扰）
+  - Stateful Lambda Expressions；（具有状态的 Lambda 表达式）；
+
+#### Executing Streams in Parallel
+
+可以通过串行或并行的方式执行 streams。当并行执行流时，Java Runtime 将流划分为多个区域形成多个子流。聚合操作并行遍历和处理这些子流，然后组合结果。
+
+在创建流时，如果没有特别声明就会创建串行流，要创建并行流，只需要调用 `Collection.parallelStream` 方法即可，或者调用 `BaseStream.parallel` 方法。
+
+参考下面的例子：
+
+```java
+double average = roster
+    .parallelStream()
+    .filter(p -> p.getGender() == Person.Sex.MALE)
+    .mapToInt(Person::getAge)
+    .average()
+    .getAsDouble();
+```
+
+#### Concurrent Reduction
+
+再看下面的例子，根据姓名进行分组，这个例子使用 collect 方法：
+
+```java
+Map<Person.Sex, List<Person>> byGender =
+    roster
+        .stream()
+        .collect(
+            Collectors.groupingBy(Person::getGender));
+```
+
+下面是等价的并行处理：
+
+```java
+ConcurrentMap<Person.Sex, List<Person>> byGender =
+    roster
+        .parallelStream()
+        .collect(
+            Collectors.groupingByConcurrent(Person::getGender));
+```
+
+这就叫做 `concurrent reduction`，对于包含 collect 操作的特定管道，如果以下所有条件都为真，则 Java 运行时执行并发归约：
+
+- 流是并行流；
+- collect 操作接收的参数：Collector 具有这样的属性，[Collector.Characteristics.CONCURRENT](https://docs.oracle.com/javase/8/docs/api/java/util/stream/Collector.Characteristics.html#CONCURRENT)，可以使用 `Collector.characteristics` 方法判断一个收集器的相关特性；
+- 要么 stream 是无需的，要么收集器具有 `Collector.Characteristics.UNORDERED` 特性。可以调用 `BaseStream.unordered` 操作判断流是否是无需的。
+
+#### Ordering
+
+管道处理流元素的顺序取决于流是串行执行还是并行执行、流的来源以及中间操作。例如，考虑下面的例子，它使用 forEach 操作多次打印 ArrayList 中存储的元素：
+
+```java
+Integer[] intArray = {1, 2, 3, 4, 5, 6, 7, 8 };
+List<Integer> listOfIntegers =
+    new ArrayList<>(Arrays.asList(intArray));
+
+System.out.println("listOfIntegers:");
+listOfIntegers
+    .stream()
+    .forEach(e -> System.out.print(e + " "));
+System.out.println("");
+
+System.out.println("listOfIntegers sorted in reverse order:");
+Comparator<Integer> normal = Integer::compare;
+Comparator<Integer> reversed = normal.reversed(); 
+Collections.sort(listOfIntegers, reversed);  
+listOfIntegers
+    .stream()
+    .forEach(e -> System.out.print(e + " "));
+System.out.println("");
+     
+System.out.println("Parallel stream");
+listOfIntegers
+    .parallelStream()
+    .forEach(e -> System.out.print(e + " "));
+System.out.println("");
+    
+System.out.println("Another parallel stream:");
+listOfIntegers
+    .parallelStream()
+    .forEach(e -> System.out.print(e + " "));
+System.out.println("");
+     
+System.out.println("With forEachOrdered:");
+listOfIntegers
+    .parallelStream()
+    .forEachOrdered(e -> System.out.print(e + " "));
+System.out.println("");
+```
+
+这个例子中有 5 个管道，输出的结果类似下面这样：
+
+```java
+listOfIntegers:
+1 2 3 4 5 6 7 8
+listOfIntegers sorted in reverse order:
+8 7 6 5 4 3 2 1
+Parallel stream:
+3 4 1 6 2 5 7 8
+Another parallel stream:
+6 3 1 5 7 8 4 2
+With forEachOrdered:
+8 7 6 5 4 3 2 1
+```
+
+解释：
+
+- 第一个管道按照元素加入集合的顺序打印；
+- 第二个管道通过 Collections.sort 方法逆序后打印所有元素；
+- 第三个和第四个管道显然是随机打印所有元素。记得前面提到过流操作使用 internal iteration 处理流中的元素。因此，当您并行执行流时，Java 编译器和运行时将确定处理流元素的顺序，以最大化并行计算的好处，除非流操作另有指定；
+- 第五个管道使用方法 `forEachOrdered`，它按照源指定的顺序处理流的元素，而不管以串行还是并行的方式执行流。注意，如果对并行流使用类似 forEachOrdered 的操作，可能会失去并行的好处。
+
+### Side Effects
+
+如果一个方法或表达式除了返回或产生一个值之外，还修改了计算机的状态，那么它就会产生副作用。
+
+例如，mutable reductions（前面提到过）或者调用 `System.out.println()` 方法用来 debugging。JDK 很好地处理了管道中的某些副作用。特别是，collect 方法被设计为以并行安全的方式执行最常见的有副作用的流操作。forEach 和 peek 等操作是针对副作用设计的；返回 void 的 lambda 表达式，在表达式中调用 System.out.println 打印，除了副作用什么都做不了。即便如此，你也应该小心使用 forEach 和 peek 操作；如果您对并行流使用这些操作之一，那么 Java 运行时可能会从多个线程并发调用您指定为参数的 lambda 表达式。此外，永远不要将在 filter 和 map 等操作中将有副作用的 lambda 表达式作为参数传递。后面会介绍 interference 和 stateful lambda expressions，这两者都可能是副作用的来源，并可能返回不一致或不可预测的结果，特别是在并行流中。下面会先介绍 laziness，因为它会直接影响到 interference。
+
+#### Laziness
+
+所有的中间操作（intermediate operation）都是 lazy 的。如果表达式、方法或算法仅在需要时才计算其值，则该表达式、方法或算法为 lazy（如果一个算法被立即评估或处理，那么它就是 eager 的）。中间操作是懒惰的，因为它们直到终端操作（terminal operations）开始才开始处理流的内容。延迟处理流使 Java 编译器和运行时能够优化它们处理流的方式。
+
+比如说，有一个 pipeline 以这样的顺序：filter-mapToInt-average 进行处理。mapToInt 从 filter 操作中获取元素，而 average 则获取从 mapToInt 产生的几个整数。average 操作会重复进行多次直到从流中获取所需的所有元素，然后计算平均值。
+
+#### Interference
+
+流操作中的 lambda expressions 应该是 `not interfere` 的（不会干扰）。在 pipeline 处理流的时候，流的 source 如果被修改了就会产生干扰（interference）。比如说，下面的代码试图将 List 中的所有 String 元素连接起来。但是，它会抛出一个 `ConcurrentModificationException`：
+
+```java
+try {
+    List<String> listOfStrings =
+        new ArrayList<>(Arrays.asList("one", "two"));
+         
+    // This will fail as the peek operation will attempt to add the
+    // string "three" to the source after the terminal operation has
+    // commenced. 
+             
+    String concatenatedString = listOfStrings
+        .stream()
+        
+        // Don't do this! Interference occurs here.
+        .peek(s -> listOfStrings.add("three"))
+        
+        .reduce((a, b) -> a + " " + b)
+        .get();
+                 
+    System.out.println("Concatenated string: " + concatenatedString);
+         
+} catch (Exception e) {
+    System.out.println("Exception caught: " + e.toString());
+}
+```
+
+例子中字符串 List 通过 reduce 终结操作连接所有的元素并获得一个 `Optional<String>` 对象。但是 pipeline 调用了一个中间操作 peek，该操作试图向 stream 的 source 也即 listOfStrings 添加一个元素。记住，所有的中间操作都是 lazy 的。这就意味着例子中调用 get 方法后，pipeline 才开始处理，当 get 方法执行完成后，pipeline 也就结束了。peek 操作试图在 pipeline 执行时修改 stream source，这会导致 Java runtime 抛出 ConcurrentModificationException。
+
+#### Stateful Lambda Expressions
+
+在 stream 操作中要避免使用 `stateful lambda expressions` 作为参数。有状态 lambda 表达式的结果依赖于在管道执行期间可能改变的任何状态。下面的例子尝试通过 map 中间操作将 List listOfIntegers 中的元素添加到一个新的 List 实例中。它会执行两次，分别使用穿行流和并行流：
+
+```java
+List<Integer> serialStorage = new ArrayList<>();
+     
+System.out.println("Serial stream:");
+listOfIntegers
+    .stream()
+    
+    // Don't do this! It uses a stateful lambda expression.
+    .map(e -> { serialStorage.add(e); return e; })
+    
+    .forEachOrdered(e -> System.out.print(e + " "));
+System.out.println("");
+     
+serialStorage
+    .stream()
+    .forEachOrdered(e -> System.out.print(e + " "));
+System.out.println("");
+
+System.out.println("Parallel stream:");
+List<Integer> parallelStorage = Collections.synchronizedList(
+    new ArrayList<>());
+listOfIntegers
+    .parallelStream()
+    
+    // Don't do this! It uses a stateful lambda expression.
+    .map(e -> { parallelStorage.add(e); return e; })
+    
+    .forEachOrdered(e -> System.out.print(e + " "));
+System.out.println("");
+     
+parallelStorage
+    .stream()
+    .forEachOrdered(e -> System.out.print(e + " "));
+System.out.println("");
+```
+
+这里面用到的 lambda 表达式：
+
+```java
+e -> {
+    parallelStorage.add(e);
+    return e;
+}
+```
+
+就是一个 stateful lambda expression。每次运行代码时，其结果都可能不同。输出可能是这样的：
+
+```java
+Serial stream:
+8 7 6 5 4 3 2 1
+8 7 6 5 4 3 2 1
+Parallel stream:
+8 7 6 5 4 3 2 1
+1 3 6 2 4 5 8 7
+```
+
+forEachOrdered 操作按照流指定的顺序处理元素，而不管流是串行执行还是并行执行。但是，当流并行执行时，map 操作处理 Java 运行时和编译器指定的流元素。因此，lambda表达式 `e -> { parallelStorage.add(e); return e;` 向 parallelStorage 中添加元素就会在每次代码运行时发生变化。对于确定性和可预测的结果，请确保流操作中的 lambda 表达式参数不是有状态的。
+
+注意：例子中使用了 `synchronizedList` 所以 `List parallelStorage` 是线程安全的。要记住集合不是线程安全的。这意味着多个线程不应该同时访问特定的集合。假设我们创建了常规的 not-thred-safe 的集合：
+
+```java
+List<Integer> parallelStorage = new ArrayList<>();
+```
+
+再执行前面的例子，程序的结果就是不可预测的，因为多个线程并发修改了 parallelStorage 而没有像同步这样的机制来安排特定线程何时可以访问 List 实例。因此，该示例可以打印类似以下的输出：
+
+```java
+Parallel stream:
+8 7 6 5 4 3 2 1
+null 3 5 4 7 8 1 2
+```
+
+
+
+## Implementations
+
+本章介绍 Java Collection Framework core interfaces 的部分实现：
+
+- 通用实现：使用最广泛的集合；
+- 特殊实现：适用特殊的场景，拥有 nonstandard performance、特征、使用限制或者行为；
+- 并发实现：为支持高并发设计的集合，这些实现是 `java.util.concurrent` 包的一部分；
+- 包装实现：结合其他实现（通常是通用实现提供的几种集合）一起使用。提供附加的或受限制的功能；
+- 便利实现：是一些 mini-implementations，通常通过静态工厂方法提供，这些方法为特殊集合(例如，只有一个元素的 set)的通用目的实现提供了方便、高效的替代方案；
+- 抽象实现：定义了一种集合的通用骨架，方便开发者扩展和自定义集合。这是一个高级的话题，不是特别难，但是相对来说很少有人需要做。
+
+通用实现如下表所示：
+
+| Interfaces | Hash table Implementations | Resizable array Implementations | Tree Implementations | Linked list Implementations | Hash table + Linked list Implementations |
+| ---------- | -------------------------- | ------------------------------- | -------------------- | --------------------------- | ---------------------------------------- |
+| `Set`      | `HashSet`                  |                                 | `TreeSet`            |                             | `LinkedHashSet`                          |
+| `List`     |                            | `ArrayList`                     |                      | `LinkedList`                |                                          |
+| `Queue`    |                            |                                 |                      |                             |                                          |
+| `Deque`    |                            | `ArrayDeque`                    |                      | `LinkedList`                |                                          |
+| `Map`      | `HashMap`                  |                                 | `TreeMap`            |                             | `LinkedHashMap`                          |
+
+如上表所示，Java Collections Framework 为 Set、List 和 Map 提供了一些通用的实现。比如 HashSet、ArrayList 和 HashMap 在大多数情况下都非常合适去使用它们。
+
+注意 `SortedSet` 和 `SortedMap` 没有出现在上表中。但是它们的实现 TreeSet 和 TreeMap 归属到了 Set 和 Map 的所属行，这里还有 Queue 的两种通用实现：`LinkedList`（它也是 List 的实现），以及 `PriorityQueue`（没有出现在表中）。这两种实现提供了不同的语义：LinkedList 提供 FIFO 语义，而 PriorityQueue 则根据元素进行排序。
+
+- 每个通用实现都提供其接口中包含的所有可选操作；
+- 都允许空元素、键和值；
+- 没有同步保证（即线程不安全）；
+- 都拥有 fail-fast 的迭代器，在迭代过程中一旦发现非法并发修改操作就会立即失败，而不会做其他操作；
+- 都实现了 `Serializabel` 接口并且都支持 `clone` 方法；
+
+在过去版本的 JDK 集合中，Vector 和 Hashtable 都是同步的，而新的集合框架都是不同步的。因为在某些时候采取同步没有任何好处，比如在单线程中使用集合且只进行读操作。此外，在某些情况下，不必要的同步可能导致死锁。
+
+如果你需要使用线程安全的集合，可以使用 synchronization wrappers，允许将任何集合转换为同步集合。因此，同步对于通用实现是可选的，而对于遗留实现是必须的。
+
+此外，`java.util.concurrent` 包提供了扩展 Queue 的 BlockingQueue 接口和扩展 Map 的 ConcurrentMap 接口的并发实现。这些实现比单纯的同步实现提供了更高的并发性。
+
+通常，您应该考虑接口，而不是实现。在大多数情况下，实现的选择只影响性能。
 
 
 
@@ -500,4 +1167,4 @@ public interface Comparable<T> {
 - https://docs.oracle.com/javase/8/docs/
 - https://docs.oracle.com/javase/8/docs/technotes/guides/collections/index.html
 - https://docs.oracle.com/javase/tutorial/collections/index.html
-- https://docs.oracle.com/javase/tutorial/collections/interfaces/order.html
+- https://docs.oracle.com/javase/tutorial/collections/implementations/set.html
