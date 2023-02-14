@@ -1159,6 +1159,363 @@ null 3 5 4 7 8 1 2
 
 通常，您应该考虑接口，而不是实现。在大多数情况下，实现的选择只影响性能。
 
+### Set Implementations
+
+Set 实现分为两类：通用实现和特殊实现；
+
+#### General-Purpost Set Implementation
+
+Set 有三种通用实现：
+
+- HashSet：比 TreeSet 要快得多（对大多数操作提供对数时间甚至常数时间），但是不提供有序元素集。
+- TreeSet：如果需要使用 SortedSet 接口，或者需要按照元素顺序迭代集合，可以使用 TreeSet。
+- LinkedHashSet：LinkedHashSet 在某种意义上介于 HashSet 和 TreeSet 之间。它使用一个链表链接 hash table，并且可以根据元素插入时的顺序去迭代它，运行速度几乎和 HashSet 一样快。LinkedHashSet 实现将其客户端从 HashSet 提供的未指定的、通常是混乱的排序中解脱出来，而不会导致与 TreeSet 相关的成本增加。
+
+关于 HashSet 有一点需要注意：线性迭代是 entries 的总数量和 buckets（the capacity）的总数量之和。因此，选择过高的初始容量会浪费空间和时间。另一方面，选择一个太低的初始容量会浪费时间，因为每次被迫增加容量时都会复制数据结构。如果没有声明初始容量，则会使用默认值 16。在过去，选择质数作为初始容量有一定的优势。这已经不是事实了。在内部，容量总是四舍五入到 2 的幂。初始容量由int构造函数指定。下面这行代码分配了一个初始容量为 64 的 HashSet。
+
+```java
+Set<String> s = new HashSet<String>(64);
+```
+
+HashSet 类有一个优化参数叫做 `load factor`。如果很在意 HashSet 的空间消耗，可以阅读 HashSet 的文档获取更多信息。否则使用默认值就可以了。
+
+LinkedHashSet 具有与 HashSet 相同的调优参数，但迭代时间不受容量的影响。TreeSet 没有调优参数。
+
+#### Special-Purpost Set Implementations
+
+Set 有两种特殊实现：
+
+- EnumSet：是 Set 为枚举类型提供的高性能实现。存储的所有元素必须是相同类型的枚举。在内部，由一个 bit-vector 表示，通常是一个 long。枚举集支持枚举类型范围内的迭代。
+
+比如，定义一周的天数的枚举，可以迭代所有工作日，EnumSet 提供了一个静态工厂方法：
+
+```java
+ for (Day d : EnumSet.range(Day.MONDAY, Day.FRIDAY))
+        System.out.println(d);
+```
+
+枚举集还为传统的位标志提供了丰富的、类型安全的替代：
+
+```java
+   EnumSet.of(Style.BOLD, Style.ITALIC)
+```
+
+- CopyOnWriteArraySet 是 Set 的一种实现，可以存储 `copy-on-write`（写入时复制）数组，所有的可变操作，比如 add、set 以及 remove，都会生成原数组的复制而不需要任何锁定操作。甚至迭代也可以安全地与元素插入和删除同时进行。与大多数 Set 实现不同，添加、删除和包含方法所需的时间与 Set 的大小成正比。这种实现只适用于很少修改但经常迭代的集合。它非常适合于维护必须防止重复的事件处理程序列表。
+
+### List Implementations
+
+List 实现可以分为通用实现和特殊实现；
+
+#### General-Purpost List Implementations
+
+有两种 List 的通用实现：
+
+- ArrayList：
+  - 支持常量级查询时间复杂度，可以使用 `System.arraycopy` 复制数组中的多个元素到另一个数组；
+- LinkedList：
+  - 如果需要频繁向 List 中插入和删除元素，可以使用 LinkedList，这些操作在 LinkedList 是常量时间复杂度的，而在 ArrayList 中是线性时间复杂度。
+
+增删操作在 ArrayList 中需要付出很大的代价，但是在查找上是常量时间的（随机访问），在 LinkedList 中查找元素是线性时间的，而增删元素确是常量时间。
+
+ArrayList 有一个优化参数：`initial capacity`。它指的是数组列表在增加之前可以容纳的元素数量。
+
+LinkedList 没有优化参数，但是提供了七个附加操作，比如 clone，其他操作则是在 Queue 接口中定义的。
+
+#### Special-Purpost List Implementations
+
+CopyOnWriteArrayList 是 List 的一种特殊实现，它通过 `copy-on-write` 的原则存储一个数组。该实现和 CopyOnWriteArraySet 类似。它不需要同步包装，即使在迭代的时候也不会抛出 ConcurrentModificationException。
+
+这种实现非常适合维护事件处理程序列表（event-handler lists），因为在事件处理程序列表中更改不频繁，遍历很频繁，而且可能很耗时。
+
+如果需要同步支持，可以考虑使用 Vector，它比 Collections.synchronizedList 封装的 ArrayList 要快一些，但是有一些遗留的问题需要注意。
+
+如果想要大小固定的 List，可以考虑使用 Arrays.asList 方法。
+
+
+
+### Map Implementations
+
+Map 的实现分为：通用实现、特殊实现以及并发实现；
+
+#### General-Purpost Map Implementations
+
+Map 有三个通用实现：
+
+- HashMap：
+  - 如果需要非常快的速度且不考虑迭代的顺序，可以使用 HashMap；
+- TreeMap：
+  - 如果想使用 SortedMap 的行为或者 key 有序的集合视图，可以使用 TreeMap；
+- LinkedHashMap：
+  - 如果既想要 HashMap 的性能也想有顺序的迭代，可以使用 LinkedHashMap。
+
+从上面几个实现来看，Map 和 Set 的通用实现有些类似。
+
+LinkedHashMap 提供了两个 LinkedHashSet 没有的功能。
+
+- 创建 LinkedHashMap 时，可以指定根据 key 的访问顺序或者插入顺序，换句话说，当我们查询某个 value 时，会将关联的 key 带到 map 的末尾；
+- 同样 LinkedHashMap 提供了 `removeEldestEntry` 方法，它支持在插入新的 entry 到 map 中时，自动覆盖掉最旧的 entry；
+
+比如下面的例子，最多允许 map 增长到 100 个 entries，然后当插入新的 entry 时自动移除最旧的 entry，保持100个条目的稳定状态。
+
+```java
+private static final int MAX_ENTRIES = 100;
+
+protected boolean removeEldestEntry(Map.Entry eldest) {
+    return size() > MAX_ENTRIES;
+}
+```
+
+#### Special-Purpost Map Implementations
+
+Map 有三种特殊实现：
+
+- EnumMap：
+  - 内部使用了一个数组，使用 enum keys 实现高性能的 map。这种实现将 Map 接口的丰富性和安全性与接近数组的速度相结合。如果你想要将一个枚举映射到一个值，你应该总是优先使用 EnumMap 而不是数组。
+- WeakHashMap：
+  - WeakHashMap 是 Map 的一种实现，它的 keys 是弱引用，当在 WeakHashMap 之外没有其他地方引用某个 key 时，垃圾回收机制就会回收该 key 对应的键值对。该类提供了利用弱引用功能的最简单方法。它对于实现“类似注册表”的数据结构很有用，在这种结构中，当任何线程都无法访问条目的键时，条目的实用功能就会消失。
+- IdentityHashMap：
+  - 它是基于 hash table 的 identity-based 的 Map 实现。该类对于保持拓扑的对象图转换 (如序列化或深度复制) 非常有用。要执行这样的转换，您需要维护一个基于身份的“节点表”，以跟踪已经看到的对象。在动态调试器和类似的系统中，基于身份的映射也用于维护对象到元信息的映射。最后，基于身份的映射在抵御 “欺骗攻击” 方面很有用，这种攻击是由故意错误的 equals 方法造成的，因为 IdentityHashMap 从不在其键上调用 equals 方法。这种实现的另一个好处是速度快。
+
+
+
+#### Concurrent Map Implementations
+
+`java.util.concurrent` 包下面包含 ConcurrentMap 接口，它扩展了 Map 体系并且添加了 putIfAbsent、remove 和 replace 方法。ConcurrentHashMap 是该接口的实现。
+
+ConcurrentHashMap 是一个由 hash 表实现的高并发、高性能的 Map 实现。此实现在执行检索时不会阻塞，并允许客户端选择 update 的并发级别。它的目的是作为 Hashtable 的直接替代品:除了实现 ConcurrentMap 之外，它还支持 Hashtable 特有的所有遗留方法。同样，如果您不需要遗留操作，请小心使用 ConcurrentMap 接口操作它。
+
+
+
+### Queue Implementations
+
+Queue 的实现分为两类：普通实现和并发实现。
+
+#### General-Purpost Queue Implementations
+
+前面提到过，LinkedList 实现了 Queue 接口，提供了 add、poll 的 FIFO 操作，等等。
+
+PriorityQueue 类是基于堆数据结构的优先级队列，在构建 PriorityQueue 时可以指定是使用元素的自然顺序还是提供一个 Comparator。
+
+队列检索操作(轮询、删除、查看和元素)访问队列头部的元素。队列的头是相对于指定顺序的最小元素。如果多个元素绑定最小值，则头部是其中一个元素; 
+
+PriorityQueue 及其迭代器实现了 Collection 和 Iterator 接口的所有可选方法。方法 iterator 中提供的迭代器不能保证以任何特定顺序遍历 PriorityQueue 中的元素。对于有序遍历，可以考虑使用 `Arrays.sort(pq.toArray())`。
+
+#### Concurrent Queue Implementations
+
+`java.util.concurrent` 包下面包含了 Queue 接口的同步实现相关的接口和类。
+
+BlockingQueue 用一些操作扩展了 Queue，这些操作在检索元素时等待队列变为非空，在存储元素时等待队列中的空间变为可用。该接口由以下类实现：
+
+- `LinkedBlockingQueue`：由链接节点支持的可选有界 FIFO 阻塞队列；
+- `ArrayBlockingQueue`：由数组支持的有界 FIFO 阻塞队列；
+- `PriorityBlockingQueue`：由堆支持的无界阻塞优先队列；
+- `DelayQueue`：由堆支持的基于时间的调度队列；
+- `SynchronousQueue`： a simple rendezvous mechanism that uses the `BlockingQueue` interface. （基于 BlockingQueue 接口实现的简单会合机制）；
+
+在JDK 7中，`TransferQueue` 是一个专门化的 `BlockingQueue`，其中向队列中添加元素的代码可以选择等待(阻塞)另一个线程中的代码来检索元素。`TransferQueue `有一个单独的实现：
+
+- `LinkedTransferQueue`：基于链接节点的无界`TransferQueue`；
+
+### Deque Implementations
+
+Deque 接口表示双端队列。Deque 接口的实现可以提供替代某些 Collection 实现的做用。它的实现分为两类：通用实现和并发实现。
+
+#### General-Purpose Deque Implementations
+
+通用实现包括 LinkedList 和 ArrayDeque 类。Deque 接口支持在两端插入、删除和检索元素。
+
+ArrayDeque 类是  Deque 接口的可变大小的数组实现，而LinkedList 类是 List 的实现。
+
+Deque 接口中的基本插入、删除和检索操作 addFirst、addLast、removeFirst、removeLast、getFirst 和 getLast。方法 addFirst 在 Deque 实例的头部添加一个元素，而 addLast 在尾部添加一个元素。
+
+LinkedList 实现比 ArrayDeque 实现更灵活。LinkedList 实现了所有可选的 List 操作。在 LinkedList 实现中允许空元素，但在 ArrayDeque 实现中不允许。
+
+在效率方面，ArrayDeque 在两端的添加和删除操作上比 LinkedList 更高效。LinkedList 实现中的最佳操作是在迭代期间删除当前元素。LinkedList 实现并不是迭代的理想结构。
+
+LinkedList 实现比 ArrayDeque 实现消耗更多的内存。对于 ArrayDeque 实例遍历，可以使用以下任意方法:
+
+（1）foreach
+
+foreach 是快速的，可以用于各种类型的列表。
+
+```java
+ArrayDeque<String> aDeque = new ArrayDeque<String>();
+
+. . .
+for (String str : aDeque) {
+    System.out.println(str);
+}
+```
+
+（2）Iterator
+
+迭代器可用于在各种类型的列表上对各种类型的数据进行前向遍历。
+
+```java
+ArrayDeque<String> aDeque = new ArrayDeque<String>();
+. . .
+for (Iterator<String> iter = aDeque.iterator(); iter.hasNext();  ) {
+    System.out.println(iter.next());
+}
+```
+
+
+
+#### Concurrent Deque Implementations
+
+LinkedBlockingDeque 是 Deque 的并发实现。如果 deque 为空，则 takeFirst 和 takeLast 等方法会等待该元素变得可用，然后检索并删除相同的元素。
+
+### Wrapper Implementations
+
+包装器实现将其所有实际工作委托给指定的集合，但在该集合提供的功能之上添加额外的功能。对于喜欢设计模式的人来说，这是一个装饰器模式的例子。
+
+这些实现是匿名的；标准库提供的不是公共类，而是静态工厂方法。所有这些实现都可以在 Collections 类中找到，该类仅由静态方法组成。
+
+#### Synchronization Wrappers
+
+同步包装器向任意集合添加自动同步(线程安全)。六个核心集合接口 (collection、Set、List、Map、SortedSet 和 SortedMap) 中的每一个都有一个静态工厂方法。
+
+```java
+public static <T> Collection<T> synchronizedCollection(Collection<T> c);
+public static <T> Set<T> synchronizedSet(Set<T> s);
+public static <T> List<T> synchronizedList(List<T> list);
+public static <K,V> Map<K,V> synchronizedMap(Map<K,V> m);
+public static <T> SortedSet<T> synchronizedSortedSet(SortedSet<T> s);
+public static <K,V> SortedMap<K,V> synchronizedSortedMap(SortedMap<K,V> m);
+```
+
+这些方法都返回一个同步的(线程安全的)集合，该集合由指定的集合备份。为了保证串行访问，对备份集合的所有访问都必须通过返回的集合来完成。保证这一点的简单方法是不保留对备份集合的引用。使用以下技巧创建同步集合。
+
+```java
+List<Type> list = Collections.synchronizedList(new ArrayList<Type>());
+```
+
+以这种方式创建的集合与正常同步的集合 (如 Vector ) 一样是线程安全的。
+
+面对并发访问，当迭代返回的集合时，用户必须手动同步它。原因是迭代是通过对集合的多次调用来完成的，而集合必须组合成单个原子操作。下面是对包装同步集合进行迭代的习惯用法。
+
+```java
+Collection<Type> c = Collections.synchronizedCollection(myCollection);
+synchronized(c) {
+    for (Type e : c)
+        foo(e);
+}
+```
+
+如果使用了显式迭代器，则必须在同步块内调用迭代器方法。不遵循此建议可能导致不确定性行为。在同步映射的 Collection 视图上迭代的习惯用法与此类似。当迭代任何 Collection 视图时，用户必须在 synchronized Map 上同步，而不是在 Collection 视图本身上同步，如下面的示例所示。
+
+```java
+Map<KeyType, ValType> m = Collections.synchronizedMap(new HashMap<KeyType, ValType>());
+    ...
+Set<KeyType> s = m.keySet();
+    ...
+// Synchronizing on m, not s!
+synchronized(m) {
+    while (KeyType k : s)
+        foo(k);
+}
+```
+
+使用包装器实现的一个小缺点是您不能执行包装实现的任何非接口操作。因此，例如，在前面的 List 示例中，您不能在包装的ArrayList 上调用 ArrayList 的 ensureCapacity 操作。
+
+#### Unmodifiable Wrappers
+
+同步包装器将同步功能添加到被包装的集合中，而不可修改的包装器则移除了某些原有的功能。特别是，它们通过拦截将修改集合的所有操作并抛出UnsupportedOperationException来剥夺修改集合的能力。不可修改的包装器有以下两个主要用途：
+
+- 使集合在构建后不可变。在这种情况下，最好不要维护对支持集合的引用。这绝对保证了不变；
+- 允许某些客户端只读访问您的数据结构。您保留了对支持集合的引用，但分发了对包装器的引用。通过这种方式，客户端可以查看但不能修改，而您可以保持完全访问。
+
+与同步包装器一样，六个核心Collection接口中的每一个都有一个静态工厂方法。
+
+```java
+public static <T> Collection<T> unmodifiableCollection(Collection<? extends T> c);
+public static <T> Set<T> unmodifiableSet(Set<? extends T> s);
+public static <T> List<T> unmodifiableList(List<? extends T> list);
+public static <K,V> Map<K, V> unmodifiableMap(Map<? extends K, ? extends V> m);
+public static <T> SortedSet<T> unmodifiableSortedSet(SortedSet<? extends T> s);
+public static <K,V> SortedMap<K, V> unmodifiableSortedMap(SortedMap<K, ? extends V> m);
+```
+
+#### Checked Interface Wrappers
+
+`Collections.checked `接口包装器提供给泛型集合使用。这些实现返回指定集合的动态类型安全视图，如果客户端试图添加错误类型的元素，该视图将抛出 ClassCastException。该语言中的泛型机制提供了编译时(静态)类型检查，但也有可能破坏这种机制。动态类型安全视图完全消除了这种可能性。
+
+### Convenience Implementations
+
+本节将介绍几个小型实现，当您不需要它们的全部功能时，它们比通用实现更方便、更高效。本节中的所有实现都是通过静态工厂方法而不是公共类提供的。
+
+#### List View of an Array
+
+`Arrays.asList` 方法返回接收的数组参数的集合视图。对 List 的更改将写入数组，反之亦然。集合的大小就是数组的大小，不能更改。如果在 List 上调用了 add 或 remove 方法，则会导致UnsupportedOperationException。
+
+这个实现的正常用途是作为基于数组和基于集合的 api 之间的桥梁。它允许您将数组传递给需要 Collection 或 List 的方法。然而，这个实现还有另一个用途。如果您需要一个固定大小的List，那么它比任何通用的 List 实现都更有效。
+
+```java
+List<String> list = Arrays.asList(new String[size]);
+```
+
+注意，对原始数组的引用不会被保留。
+
+#### Immutable Multiple-Copy List
+
+偶尔你会需要一个由同一元素的多个副本组成的不可变 List。`Collections.nCopies` 返回这样的 List。这个实现有两个主要用途。第一个是初始化一个新创建的 List；例如，假设你想要一个初始包含 1000 个空元素的数组列表。像下面这样：
+
+```java
+List<Type> list = new ArrayList<Type>(Collections.nCopies(1000, (Type)null));
+```
+
+当然，每个元素的初始值不必为空。第二个主要用途是增长一个现有的 List。例如，假设您想在 `List< string >` 的末尾添加 69 个字符串 “fruit bat” 的副本。不清楚你为什么要做这样的事情，但让我们假设你做了。下面是你该怎么做。
+
+```java
+lovablePets.addAll(Collections.nCopies(69, "fruit bat"));
+```
+
+通过使用接受索引参数和 Collection 参数的 addAll 方法，可以将新元素添加到 List 的中间，而不是到列表的末尾。
+
+#### Immutable Singleton Set
+
+有时您需要一个不可变的单例集，它由单个指定的元素组成。`Collections.singleton` 方法返回这样的 Set。此实现的一个用途是从集合中删除所有指定元素的出现。
+
+```java
+c.removeAll(Collections.singleton(e));
+```
+
+相关的习惯用法从 map 中删除映射到指定值的所有元素。例如，假设您有一个Map - job，它将人们映射到他们的工作领域，并假设您希望消除所有的律师。下面的一行代码就可以做到这一点。
+
+```java
+job.values().removeAll(Collections.singleton(LAWYER));
+```
+
+此实现的另一个用途是向编写为接受值集合的方法提供单个输入值。
+
+#### Empty Set，List，and Map Constants
+
+Collection s类提供了返回空 Set、List 和 Map 的方法：emptySet、emptyList 以及 emptyMap。当您根本不想提供任何值时，这些常量的主要用途是作为方法的输入，这些方法接受一个值集合，如本例所示。
+
+```java
+tourist.declarePurchases(Collections.emptySet());
+```
+
+### Summary of Implementations
+
+Java 集合框架提供核心接口的一些通用实现：
+
+- 对于 Set 接口，HashSet 用的最广泛；
+- 对于 List 接口，ArrayList 使用的最广泛；
+- 对于 Map 接口，HashMap 使用的最广泛；
+- 对于 Queue 接口，LinkedList 使用的最广泛；
+- 对于 Deque 接口，ArrayDeque 使用的最广泛；
+
+每个通用实现都提供其接口中包含的所有可选操作。
+
+Java Collections Framework 还为需要非标准性能、使用限制或其他不寻常行为的情况提供了一些特殊用途的实现。
+
+java.util.concurrent 包包含几个集合实现，它们是线程安全的，但不受单个排除锁的控制。
+
+Collections 类 (与 Collection 接口相反) 提供了操作或返回集合的静态方法，这些方法被称为 Wrapper 实现。
+
+最后，还有几种便捷性实现，当您不需要它们的全部功能时，它们可能比通用目的的实现更高效。便利实现是通过静态工厂方法提供的。
+
 
 
 进度：
@@ -1167,4 +1524,4 @@ null 3 5 4 7 8 1 2
 - https://docs.oracle.com/javase/8/docs/
 - https://docs.oracle.com/javase/8/docs/technotes/guides/collections/index.html
 - https://docs.oracle.com/javase/tutorial/collections/index.html
-- https://docs.oracle.com/javase/tutorial/collections/implementations/set.html
+- https://docs.oracle.com/javase/tutorial/collections/algorithms/index.html
