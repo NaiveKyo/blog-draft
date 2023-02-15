@@ -1,3 +1,20 @@
+---
+title: Java Collection Framework Overview
+author: NaiveKyo
+top: false
+hide: false
+img: 'https://cdn.jsdelivr.net/gh/NaiveKyo/CDN/img/20220425110851.jpg'
+coverImg: /img/20220425110851.jpg
+cover: false
+toc: true
+mathjax: false
+date: 2023-02-15 22:25:48
+summary: "Java 集合框架"
+categories: "Java"
+keywords: "Java"
+tags: "Java"
+---
+
 # The Collection Framework
 
 集合框架是表示和操作集合的统一体系结构，使它们能够独立于其表示的细节进行操作。它减少了编程工作，同时提高了性能。它实现了不相关 api 之间的互操作性，减少了设计和学习新 api 的工作量，并促进了软件重用。该框架基于十多个 collection 接口。它包括这些接口的实现和操作它们的算法。
@@ -1516,12 +1533,158 @@ Collections 类 (与 Collection 接口相反) 提供了操作或返回集合的�
 
 最后，还有几种便捷性实现，当您不需要它们的全部功能时，它们可能比通用目的的实现更高效。便利实现是通过静态工厂方法提供的。
 
+## Algorithms
+
+Java 平台提供了一些多态的可重用的算法。这些定义在 `java.util.Collections` 类中的方法都是静态方法且第一个参数都是集合。
+
+Java 平台提供的绝大多数算法都在 List 实例上操作，但也有少数算法在任意 Collection 实例上操作。主要包括下列算法：
+
+- 排序；
+- Shuffling；
+- 常规数据操作；
+- 查找；
+- Composition；
+- Finding Extreme Values；
+
+### Sorting
+
+排序算法对 List 进行重新排序，使其元素按照排序关系升序排列。提供了两种操作形式。
+
+（1）简单形式接受一个 List，并根据其元素的自然顺序对其进行排序。排序操作使用了一个稍微优化的归并排序算法，它快速而稳定：
+
+- Fast：它保证在 `n log(n)` 时间内运行，并且在几乎有序的列表上运行得更快；实证测试表明，它与高度优化的快速排序一样快。快速排序通常被认为比归并排序更快，但不稳定，不能保证 `n log(n)` 的性能；
+- Stable：它不会对相等的元素重新排序。如果您根据不同的属性对相同的列表重复排序，这很重要。如果邮件程序的用户先按邮件日期对收件箱进行排序，然后再按发件人进行排序，那么用户自然希望来自给定发件人的现在连续的邮件列表将(仍然)按邮件日期进行排序。只有当第二种类型是稳定的时，才能保证这一点。
+
+下面这个简单的程序按字典(字母)顺序输出它的参数。
+
+```java
+import java.util.*;
+
+public class Sort {
+    public static void main(String[] args) {
+        List<String> list = Arrays.asList(args);
+        Collections.sort(list);
+        System.out.println(list);
+    }
+}
+```
+
+（2）排序的第二种形式是在 List 之外使用 Comparator，并使用 Comparator 对元素进行排序。
+
+### Shuffling
+
+shuffle 算法的作用与 sort算法相反，它会破坏 List 中可能存在的任何顺序痕迹。也就是说，该算法基于来自随机源的输入对 List 进行重新排序，这样所有可能的排列都以相同的可能性发生，假设有一个公平的随机源。该算法在实现机会博弈时很有用。例如，它可以用来洗牌表示一副牌的 List of Card 对象。同样，它对于生成测试用例也很有用。
+
+此操作有两种形式：一种接受 List 并使用默认的随机性源，另一种要求调用者提供一个 Random 对象以用作随机性源。
+
+### Routine Data Manipulation
+
+Collections 类提供了五个算法用于操作 List 对象：
+
+- reverse：使 List 逆序；
+- fill：使用特定的值覆盖 List 中的元素，这个操作非常适合重新初始化 List；
+- copy：接收两个参数，目标 List 和源 List，将源 List 的所有元素覆盖到目标 List 中，注意目标 List 的 size 要大于等于源 List，多余的位置不受影响；
+- swap：交换 List 中指定两个位置的元素；
+- addAll：向目标 Collection 中添加特定的元素集，要添加的元素可以单独列出，也可以以数组形式传递。
+
+### Searching
+
+binarySearch 可以在一个有序的 List 中搜索特定值。这个算法也有两种形式：
+
+第一种形式接收一个 List 参数和一个值参数，最终返回该值在列表中的下标索引，要求 List 已经有序（根据元素的自然顺序升序排列）；
+
+第二种形式在前两个参数的基础上再接收一个 Comparator 附加参数，将 List 根据提供的比较器顺序进行排序，然后再搜索目标元素。
+
+在调用 binarySearch 之前，可以使用排序算法对 List 进行排序。
+
+### Composition
+
+frequency 和 disjoint（不相交）算法可以测试一个或多个集合的某些组成的方面：
+
+- frequency：统计指定元素在指定集合中出现的次数；
+- disjoint：判断两个 Collection 是不是不相交的，也就是说，它们是否不包含共同的元素；
+
+### Finding Extreme Values
+
+min 和 max 算法分别返回指定集合中包含的最小和最大元素。这两种操作有两种形式。简单的方法只接受一个 Collection，并根据元素的自然顺序返回最小(或最大)元素。第二种形式在集合之外接受一个 Comparator，并根据指定的 Comparator 返回最小(或最大)元素。
 
 
-进度：
 
-- https://docs.oracle.com/javase/8/javase-books.htm
-- https://docs.oracle.com/javase/8/docs/
-- https://docs.oracle.com/javase/8/docs/technotes/guides/collections/index.html
-- https://docs.oracle.com/javase/tutorial/collections/index.html
-- https://docs.oracle.com/javase/tutorial/collections/algorithms/index.html
+## Custom Collection Implementations
+
+很多程序中不需要去实现自定义的集合。使用前面提到的诸多实现就可以解决大部分问题，但是有时候如果你向去自己实现集合，可以借助 Java 平台提供的集合的诸多抽象实现。在讨论如何编写实现之前，让我们先讨论一下为什么要编写实现。
+
+### Reasons to Write an Implementation
+
+下面的列表说明了您可能想要实现的自定义集合的类型。只是列举了一部分可能存在的原因：
+
+- Persistent：所有内置的集合实现都是运行在内存中的，程序已结束它们就消失了。如果您想要一个在下次程序启动时仍然存在的集合，您可以通过在外部数据库上构建一个贴面来实现它。这样的集合可以被多个程序并发地访问；
+- Application-specific：这是一个很宽泛的主题，一种例子是存储了实时遥感数据的不可修改的 Map，键可以表示位置，值可以从这些位置的传感器读取，以响应get操作；
+- High-performance，general-purpose：Java Collections Framework 的设计者试图为每个接口提供最好的通用实现，但是可以使用的数据结构有很多，而且每天都有新的数据结构被发明出来。也许你能想出更快的办法；
+
+- Enhanced functionality：假设你需要一个高效的包实现(也称为 multiset)：在允许重复元素的同时提供恒定时间遏制检查的集合。在 HashMap 之上实现这样一个集合相当简单；
+- Convenience：您可能需要提供比 Java 平台提供的更方便的其他实现。例如，您可能经常需要表示连续整数范围的 List 实例；
+- Adapter：假设您正在使用一个遗留API，它有自己的临时集合API。您可以编写一个适配器实现，允许这些集合在 Java collections Framework 中操作。
+
+#### How to Write a Custom Implementation
+
+编写自定义实现非常简单。Java Collections Framework 提供了专门为方便自定义实现而设计的抽象实现。我们将从下面的 Arrays.asList 实现示例开始。
+
+```java
+public static <T> List<T> asList(T[] a) {
+    return new MyArrayList<T>(a);
+}
+
+private static class MyArrayList<T> extends AbstractList<T> {
+
+    private final T[] a;
+
+    MyArrayList(T[] array) {
+        a = array;
+    }
+
+    public T get(int index) {
+        return a[index];
+    }
+
+    public T set(int index, T element) {
+        T oldValue = a[index];
+        a[index] = element;
+        return oldValue;
+    }
+
+    public int size() {
+        return a.length;
+    }
+}
+```
+
+信不信由你，这与 java.util.Arrays 中包含的实现非常接近。就是这么简单!您提供一个构造函数和get、set和size方法，AbstractList完成其余的工作。您可以免费获得 ListIterator、批量操作、搜索操作、哈希代码计算、比较和字符串表示。
+
+假设您想让实现更快一点。抽象实现的 API 文档精确地描述了每个方法是如何实现的，因此您将知道要覆盖哪些方法才能获得所需的性能。前面的实现的性能很好，但还可以稍加改进。具体来说，toArray 方法遍历 List，每次复制一个元素。考虑到内部表示，克隆数组要快得多，也更明智。
+
+```java
+public Object[] toArray() {
+    return (Object[]) a.clone();
+}
+```
+
+下面的列表总结了抽象实现：
+
+- `AbstractCollection`：既不是集合也不是列表的集合。至少，您必须提供迭代器和 size 方法；
+- `AbstractSet`：一个 Set，和 AbstractCollection 类似；
+- `AbstractList`：由随机访问数据存储(如数组)备份的列表。至少，您必须提供位置访问方法(get和可选的set、remove和add)和size方法。抽象类负责listIterator(和iterator)；
+- `AbstractSequentialList`：由顺序访问数据存储(如链表)备份的列表。至少，您必须提供listIterator和size方法。抽象类负责位置访问方法。(这与AbstractList相反）；
+- `AbstractQueue`：至少，您必须提供offer、peek、poll和size方法以及支持remove的迭代器；
+- `AbstractMap`：一张地图。至少必须提供entrySet视图。这通常是用AbstractSet类实现的。如果Map是可修改的，您还必须提供put方法。
+
+编写自定义实现的过程如下：
+
+（1）从前面的列表中选择适当的抽象实现类。
+
+（2）为类的所有抽象方法提供实现。如果您的自定义集合是可修改的，那么您还必须重写一个或多个具体方法。抽象实现类的API文档将告诉您要重写哪些方法。
+
+（3）测试并在必要时调试实现。现在您有了一个工作的自定义集合实现。
+
+（4）如果您关心性能，请阅读抽象实现类的API文档，了解您要继承其实现的所有方法。如果有太慢的，就重写它们。如果重写任何方法，请确保在重写之前和之后测量方法的性能。在性能调整上投入多少精力应该取决于实现的使用率以及它的使用对性能的重要性。(通常这一步最好省略。)
+
