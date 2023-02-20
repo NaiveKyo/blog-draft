@@ -111,7 +111,394 @@ null -> null
 
 请注意，迭代器的快速失败行为不能得到保证，一般来说，在存在不同步的并发修改时，不可能做出任何硬保证。快速失败迭代器会尽可能地抛出 ConcurrentModificationException。因此，编写依赖于这个异常的程序是错误的。`the fail-fast behavior of iterators should be used only to detect bugs.`
 
-​	
+## 4、实现分析
+
+HashMap 这种实现通常被看作 binned（bucketed）的 hash table，一旦 bins 过大，它们就会转化为 TreeNodes 组成的 bins，这种结构和 TreeMap 类似（红黑树）。HashMap 的大多数方法通常会使用正常的 bins，只有在适当的时候才会调用 TreeNode 方法（通过查看 node 的实例类型）。遍历和使用由 TreeNodes 组成的 bins 和常规的 HashMap 操作没什么区别，只不过在数据量大的时候，TreeNode 查询键值对会更快一些。
+
+Tree bins（bin 的元素由 TreeNode 组成）中元素的顺序是由 hashCode 决定的。但是当 hashCode 相同，且 HashMap 的键实现了 Comparable 接口，就会调用它们的 compareTo 方法来决定顺序（例如 `class C implements Comparable<C>` ，会通过反射来检测泛型的实际类型）。使用 tree bins 虽然会让 Map 实现变得更复杂，但是有一点却很值得，因为当两个 key 有不同的 hashCode 或者可以比较，它就能提供最坏情况下 `O(log n)` 级别的时间复杂度。
+
+因为 TreeNodes 的数量通常是普通 nodes 的两倍，所以说只有当 bins 包含了足够多的 node 后才会使用它（参考 `TREEIFY_THRESHOLD` 常量）。同时当 node 数量变得足够小时，TreeNodes 又会被转变为正常的 nodes（通过 `removal` 或者 `resizing`）。
+
+如果说 Map 中元素的 hashCode 分布很均匀，一般就不会使用 tree bins。理想情况下，使用随机 hashCode，bins 中的 nodes 一般遵循[泊松分布](https://en.wikipedia.org/wiki/Poisson_distribution)。
+
+tree bins 的第一个结点通常就是它的根结点。但是有些时候（当前只出现在 Iterator.remove 方法中），root 可能不是第一个 node，此时可以通过 `TreeNode.root()` 获取根结点。
+
+所有适当的内部方法会接收一个 hash code 作为一个参数（通常由一个公共方法计算获得），这样后续的某些操作就可以不用重新计算 hash code 了。大部分内部方法也会接收一个 "tab" 参数，它就是当前的 table，但是在 resizing 和 converting 时，tab 可能是新的或旧的 table。
+
+当 bin lists 进行 treeify、split 或者 untreeified，我们会保持它们的相对访问顺序（也就是 Node.next）。
+
+## 静态变量
+
+下面看一下 HashMap 类中拥有的静态变量：
+
+### （1）DEFAULT_INITIAL_CAPACITY
+
+```java
+static final int DEFAULT_INITIAL_CAPACITY = 1 << 4; // aka 16
+```
+
+初始化容量，最好是 2 的幂。
+
+### （2）MAXIMUM_CAPACITY
+
+```java
+static final int MAXIMUM_CAPACITY = 1 << 30;
+```
+
+最大容量，如果通过构造参数指定该参数，则必须小于等于 1 << 30（整数 4 字节）；
+
+### （3）DEFAULT_LOAD_FACTOR
+
+```java
+static final float DEFAULT_LOAD_FACTOR = 0.75f;
+```
+
+默认的负载因子，通常情况下使用 0.75 可以在时间和空间成本上较为均衡。
+
+### （4）TREEIFY_THRESHOLD
+
+```java
+static final int TREEIFY_THRESHOLD = 8;
+```
+
+bin 树化的阈值，超过了该阈值，则 bins 由原来的 list of bin 转变为 tree bin。当某个 bin 加入了一个新的 node，然后该 bin 中 node 的数量超过了这个阈值，bin 就会树化。
+
+该参数应该大于 2 且至少为 8。
+
+### （5）UNTREEIFY_THRESHOLD
+
+```java
+static final int UNTREEIFY_THRESHOLD = 6;
+```
+
+bin untreeifying 的阈值。该参数必须小于 TREEIFY_THRESHOLD，且至少为 6。
+
+### （6）MIN_TREEIFY_CAPACITY
+
+```java
+static final int MIN_TREEIFY_CAPACITY = 64;
+```
+
+当 table 的容量大于该值时，bins 就会树形化（Otherwise the table is resized if too many nodes in a bin.）。该值至少为 4 * TREEIFY_THRESHOLD 避免调整大小和树状化阈值之间的冲突。
+
+## 结点定义
+
+### Basic hash bin node
+
+看一下普通的 hash bin node：
+
+```java
+static class Node<K,V> implements Map.Entry<K,V> {
+    final int hash;
+    final K key;
+    V value;
+    Node<K,V> next;
+
+    Node(int hash, K key, V value, Node<K,V> next) {
+        this.hash = hash;
+        this.key = key;
+        this.value = value;
+        this.next = next;
+    }
+
+    public final K getKey()        { return key; }
+    public final V getValue()      { return value; }
+    public final String toString() { return key + "=" + value; }
+
+    public final int hashCode() {
+        return Objects.hashCode(key) ^ Objects.hashCode(value);
+    }
+
+    public final V setValue(V newValue) {
+        V oldValue = value;
+        value = newValue;
+        return oldValue;
+    }
+
+    public final boolean equals(Object o) {
+        if (o == this)
+            return true;
+        if (o instanceof Map.Entry) {
+            Map.Entry<?,?> e = (Map.Entry<?,?>)o;
+            if (Objects.equals(key, e.getKey()) &&
+                Objects.equals(value, e.getValue()))
+                return true;
+        }
+        return false;
+    }
+}
+```
+
+可以看到这是一种链状结构，每个结点中有当前节点的键值对、hash 值、下一个结点的链接。重写了 hashCode 和 equals 方法。
+
+### entry for tree bins
+
+先了解一个继承关系：
+
+`HashMap.TreeNode` extend `LinkedHashMap.Entry` entend `HashMap.Entry`
+
+先看 LinkedHashMap 中的 Entry：
+
+```java
+static class Entry<K,V> extends HashMap.Node<K,V> {
+    Entry<K,V> before, after;
+    Entry(int hash, K key, V value, Node<K,V> next) {
+        super(hash, key, value, next);
+    }
+}
+```
+
+可以看到这个 Entry 扩展了前面的 Node，增加了 before 和 after 两个链接，并提供了新的构造方法，这样 HashMap 中的 Entry 中一共有三个链接了：before、next、after；
+
+然后看看 HashMap.Entry：
+
+```java
+static final class TreeNode<K,V> extends LinkedHashMap.Entry<K,V> {
+    TreeNode<K,V> parent;  // red-black tree links
+    TreeNode<K,V> left;
+    TreeNode<K,V> right;
+    TreeNode<K,V> prev;    // needed to unlink next upon deletion
+    boolean red;
+    TreeNode(int hash, K key, V val, Node<K,V> next) {
+        super(hash, key, val, next);
+    }
+	
+    // 。。。。。。
+}
+```
+
+可以看到这是一种红黑树的实现；
+
+TODO
+
+## 静态工具方法
+
+### （1）计算 hash 值的方法；
+
+```java
+static final int hash(Object key) {
+    int h;
+    return (key == null) ? 0 : (h = key.hashCode()) ^ (h >>> 16);
+}
+```
+
+通过 key.hashCode 高位分散到低位来减少 hash 冲突，更多信息参考源码注释。
+
+### （2）检测类型的方法；
+
+```java
+static Class<?> comparableClassFor(Object x) {
+    if (x instanceof Comparable) {
+        Class<?> c; Type[] ts, as; Type t; ParameterizedType p;
+        if ((c = x.getClass()) == String.class) // bypass checks
+            return c;
+        if ((ts = c.getGenericInterfaces()) != null) {
+            for (int i = 0; i < ts.length; ++i) {
+                if (((t = ts[i]) instanceof ParameterizedType) &&
+                    ((p = (ParameterizedType)t).getRawType() ==
+                     Comparable.class) &&
+                    (as = p.getActualTypeArguments()) != null &&
+                    as.length == 1 && as[0] == c) // type arg is c
+                    return c;
+            }
+        }
+    }
+    return null;
+}
+```
+
+可以看到这这个方法的主要目的是检测 x 对象是 Comparable 类型的；
+
+方法内部首先检测如果是 String 就不需要检测了，如果对象 x 实现的接口或者代表的接口泛型是类似 `T<X>` 这样的，则检测其泛型 `X` 是否是 `Comparable.class`，如果是就直接返回，如果不是则返回 null。
+
+### （3）进行 compare 的方法；
+
+```java
+@SuppressWarnings({"rawtypes","unchecked"}) // for cast to Comparable
+static int compareComparables(Class<?> kc, Object k, Object x) {
+    return (x == null || x.getClass() != kc ? 0 :
+            ((Comparable)k).compareTo(x));
+}
+```
+
+### （4）规范化初始容量的方法；
+
+```java
+static final int tableSizeFor(int cap) {
+    int n = cap - 1;
+    n |= n >>> 1;
+    n |= n >>> 2;
+    n |= n >>> 4;
+    n |= n >>> 8;
+    n |= n >>> 16;
+    return (n < 0) ? 1 : (n >= MAXIMUM_CAPACITY) ? MAXIMUM_CAPACITY : n + 1;
+}
+```
+
+如果构造参数传递的初始容量并不是 2 的幂的话，则进行调整。
+
+## 常规属性
+
+### （1）table；
+
+```java
+transient Node<K,V>[] table;
+```
+
+table 其实就表示 list of bin 或者 tree bin，它是懒初始化的，一般只有第一个使用 HashMap 或者 resize 的时候会进行调整。在实例化时，它的 length 是 2 的幂。
+
+### （2）entrySet；
+
+```java
+transient Set<Map.Entry<K,V>> entrySet;
+```
+
+Map 的 collection-view 中保存 entry 的 set；
+
+### （3）size；
+
+```java
+transient int size;
+```
+
+Map 持有的键值对的数量；
+
+### （4）modCount；
+
+```java
+transient int modCount;
+```
+
+当 HashMap 的结构出现变化（树化或反树化）或者保存的键值对的数量发生变化就会使用到这个值。在使用集合视图进行迭代的时候，也是根据这个字段来决定是否 fail-fast 的（抛出 ConcurrentModificationException）；
+
+### （5）threshold；
+
+```java
+int threshold;
+```
+
+当发生 resize 的时候，使用该值作为新的 size，通常是 `capacity * load factor`。
+
+除此之外，如果 table 数组没有实例化，这个字段存的就是初始数组容量，或者为 0 表示 DEFAULT_INITIAL_CAPACITY。
+
+### （6）loadFactor
+
+```java
+final float loadFactor;
+```
+
+hash table 的负载因子。
+
+## 公共方法
+
+### （1）构造方法
+
+```java
+public HashMap(int initialCapacity, float loadFactor) {
+    if (initialCapacity < 0)
+        throw new IllegalArgumentException("Illegal initial capacity: " +
+                                           initialCapacity);
+    if (initialCapacity > MAXIMUM_CAPACITY)
+        initialCapacity = MAXIMUM_CAPACITY;
+    if (loadFactor <= 0 || Float.isNaN(loadFactor))
+        throw new IllegalArgumentException("Illegal load factor: " +
+                                           loadFactor);
+    this.loadFactor = loadFactor;
+    this.threshold = tableSizeFor(initialCapacity);
+}
+```
+
+可以看到包含完整参数的构造方法，首先判断初始容量和负载因子是否合法，不合法就抛出异常或者调整为特定值，前面提到 `threshold` 通常存的是 hash table 数组的初始长度，`tableSizeFor` 则是规范化容量的方法（确保 threshold 是 2 的幂）。
+
+```java
+public HashMap(int initialCapacity) {
+    this(initialCapacity, DEFAULT_LOAD_FACTOR);
+}
+
+public HashMap() {
+	this.loadFactor = DEFAULT_LOAD_FACTOR; // all other fields defaulted
+}
+```
+
+这里有个特殊的构造方法是构造了一个空的 HashMap，之前提到过 HashMap 是懒初始化的，在 put 元素时会检查是否需要初始化 table。
+
+```java
+public HashMap(Map<? extends K, ? extends V> m) {
+    this.loadFactor = DEFAULT_LOAD_FACTOR;
+    putMapEntries(m, false);
+}
+
+final void putMapEntries(Map<? extends K, ? extends V> m, boolean evict) {
+    int s = m.size();
+    if (s > 0) {
+        if (table == null) { // pre-size
+            float ft = ((float)s / loadFactor) + 1.0F;
+            int t = ((ft < (float)MAXIMUM_CAPACITY) ?
+                     (int)ft : MAXIMUM_CAPACITY);
+            if (t > threshold)
+                threshold = tableSizeFor(t);
+        }
+        else if (s > threshold)
+            resize();
+        for (Map.Entry<? extends K, ? extends V> e : m.entrySet()) {
+            K key = e.getKey();
+            V value = e.getValue();
+            putVal(hash(key), key, value, false, evict);
+        }
+    }
+}
+```
+
+这个构造方法是根据已有的一个 Map 构造新的 HashMap，可以参考一下 putMapEntries 方法中处理逻辑：
+
+- HashMap 是空的，且已知要插入元素的数量，通过 `float ft = ((float)s / loadFactor) + 1.0F;` 可以为新的 HashMap 指定一个初始容量，减少 HashMap 的结构变化次数，提高一定的性能；
+- 如果 HashMap 不是空的，则进行比较 `s > threshold` 来判断是否需要 `resize()`，resize 会将 table 的 size 增长 2 倍；
+
+### （2）get
+
+根据 key 获取对应的 value：
+
+```java
+public V get(Object key) {
+    Node<K,V> e;
+    return (e = getNode(hash(key), key)) == null ? null : e.value;
+}
+```
+
+`hash(key)` 先计算 hash 值，作为参数传递，后面就不用重复计算了。重点在 getNode 方法：
+
+```java
+final Node<K,V> getNode(int hash, Object key) {
+    Node<K,V>[] tab; 
+    Node<K,V> first
+    Node<K,V> e; 
+    int n; 
+    K k;
+    if ((tab = table) != null && (n = tab.length) > 0 &&
+        (first = tab[(n - 1) & hash]) != null) {
+        if (first.hash == hash && // always check first node
+            ((k = first.key) == key || (key != null && key.equals(k))))
+            return first;
+        if ((e = first.next) != null) {
+            if (first instanceof TreeNode)
+                return ((TreeNode<K,V>)first).getTreeNode(hash, key);
+            do {
+                if (e.hash == hash &&
+                    ((k = e.key) == key || (key != null && key.equals(k))))
+                    return e;
+            } while ((e = e.next) != null);
+        }
+    }
+    return null;
+}
+```
+
+根据前面了解的知识来看这个方法的逻辑，`tab` 指向当前的 table 数组（i.e. list of bin），n 就是 table 数组的长度，而 `first = tab[(n - 1) & hash]` 则计算目标 key 映射到当前 table 的位置对应的 Node 元素，这个 hash 值的计算使用了键的 hashCode。
+
+比对顺序是这样的：`hash -> key -> equals`，如果匹配上了就返回对应的 Node，如果没能匹配上 first，我们假设可能发生了 hash 冲突，就沿着 Node 链继续向下找，找的时候还要考虑 Node 的类型，是常规的 Node ？还是树化的 TreeNode ？
+
+- 如果是常规的 Node，就沿着链表继续向后一个一个的匹配就可以；
+- 如果是 TreeNode，就调用红黑树的查找方法去找；
 
 
 
