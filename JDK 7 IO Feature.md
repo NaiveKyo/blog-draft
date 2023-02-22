@@ -6,6 +6,7 @@
 - https://openjdk.org/projects/nio/presentations/TS-5686.pdf
 - https://openjdk.org/projects/nio/presentations/TS-5052.pdf
 - https://openjdk.org/projects/nio/presentations/TS-4222.pdf
+- https://jenkov.com/tutorials/java-nio/index.html
 
 
 
@@ -600,8 +601,10 @@ AsynchronousChannelGroup.withFixedThreadPool
 - An asynchronous channel group associated with a fixed thread pool of size N creates N threads that are waiting for already processed I/O events.
 - The kernel dispatches events directly to those threads:
   - Thread first completes the I/O operation (like filling a ByteBuffer during a read operation). 
-  - Next invoke the CompletionHandler.completed() that consumes the result.
+  - Next invoke the `CompletionHandler.completed()` that consumes the result.
   - When the CompletionHandler terminates normally then the thread returns to the thread pool and wait on a next event. 
+- Avoid blocking/long lived operations inside a completion handler.
+- If not possible, either use a CachedThreadPool or another ExecutorService that can be used from a completion handler.
 
 ### Deadlock
 
@@ -623,3 +626,154 @@ AsynchronousChannelGroup.withFixedThreadPool
 
 - Probability of suffering the hang problem compared with the FixedThreadPool is lower.（和 FixedThreadPool 相比，CachedThreadPool 出现挂起问题的概率要小一些）
 - Still might grow infinitely…（但是也会出现）
+- At least you guarantee that the kernel will be able to complete its I/O operations (like reading bytes).（但是能够确保操作系统内核能够完成 I/O 操作）
+-  Oops…CachedThreadPool must support unbounded queuing to works properly.（但是 CachedThreadPool 需要支持无界队列，比如 LinkedBlockingQueue 无参构造）
+- **So you can possibly lock all the threads and feed the queue forever until OOM happens.** （可以锁定所有线程，然后后续的工作任务就会不断加入到队列中，直到 OOM）
+- Avoid blocking/long lived operations inside a completion handler.
+- Possibility of OOM if the queue grow indefinitively => monitor the queue
+
+### Kernel/default thread pool
+
+- Hybrid of the above configurations：
+  - Cached thread pool that creates threads on demand；（使用 CachedThreadPool 时根据需要创建线程）；
+  - N threads that dequeue events and dispatch directly to CompletionHandler
+- N defaults to the number of hardware threads.
+- In addition to N threads, there is one additional internal thread that dequeues events and submits tasks to the thread pool to invoke completion handlers.
+
+### AsynchronousSocketChannel.read()
+
+Once a connection has been accepted, it is now time to read some bytes:
+
+```java
+AsynchronousSocketChannel.read(ByteBuffer b,
+ Attachement a,
+CompletionHandler<> c);
+```
+
+看到这个方法，可以对比 NIO 中的 SelectionKey.attach() 方法。
+
+考虑以下问题：
+
+- Let’s say you get 10 000 accepted connections
+- Hence 10 000 ByteBuffer created, and the read operations get invoked
+- – Now we are waiting, waiting, waiting, waiting for the remote client(s) to send us bytes (slow clients/ network)
+- Another 10 000 requests comes in, and we are again creating 10 000 ByteBuffer and invoke the read() operations.
+- OOM
+
+## Use ByteBuffer pool & Throttle
+
+- Let’s not be too negative here. So far we have tested with more than 20 000 clients without any issues
+- But this is still something you have to keep in mind!!
+- Might want to throttle the read() operation to avoid the creation of too many ByteBuffer
+-  We strongly recommend the use of a ByteBuffer pool, specially if you are using Heap ByteBuffer (more on this later). 
+-  Get a ByteBuffer before invoking the read() method, and return it to the pool once the read operations complete.
+
+
+
+## Blocking AsynchronousSocketChannel.read()
+
+- When invoking the read operation, the returned value is a Future:
+
+```java
+Future readOp = AsynchronousSocketChannel.read(…);
+readOp.get(30, TimeUnit.SECONDS);
+```
+
+- The Thread will block until the read operation complete or times out
+- **Be careful as you might lock your ThreadPool (specially with FixedThreadPool)**
+
+## AsynchronousSocketChannel.write()
+
+```java
+AsynchronousSocketChannel.write(ByteBuffer b,
+ Attachement a,
+CompletionHandler<> c);
+```
+
+- Since we are asynchronous, invoking write(..) will not block, so the calling thread can continue its execution.
+- What happens when the calling thread invokes the write method again and the CompletionHandler has not yet been invoked by the previous write call?
+
+- You get a **WritePendingException**
+- Hence when invoking the write operation, make sure the CompletionHandler.complete() has been invoked before initiating another write. 
+- Better, store ByteBuffer inside a queue and execute write operations only when the previous one has completed (will show code soon)
+- As for read, we strongly recommend the use of a ByteBuffer pool for executing write operations. Get one before writing, put it back to the pool after.
+
+
+
+## Damned ByteBuffer!
+
+- If you are using Heap ByteBuffer, be aware the kernel will copy the bytes into a direct ByteBuffer during every write operation:
+- Direct ByteBuffer performance have significantly improved with JDK 7, so use them all the time.
+- Scattered ByteBuffer write operations still offer you free copy, using direct ByteBuffer or not!
+
+## AsynchronousFileChannel.open()
+
+Before, the nightmare:
+
+```java
+File f = new File();
+FileOutputStream fis = new
+FileOutputStream(f);
+FileChannel fc = fis.getChannel();
+fc.write(…);
+```
+
+ Now, the paradise:
+
+```java
+afc = AsynchronousFileChannel.open(Path
+file, OpenOption... options);
+afc.write(…);
+```
+
+
+
+# Extension：Java NIO Framework
+
+Java NIO 框架：
+
+- Mina；Apache 项目
+
+- Grizzly；Sun 公司项目，是 NIO 的一层简单封装；
+- Netty；Jboss 项目，目前最流行；
+
+
+
+# Tutorial
+
+https://jenkov.com/tutorials/java-nio/index.html
+
+# Conclusion
+
+总结 Java NIO 的几个核心概念（加粗为核心组件）：
+
+（1）**Channels**；
+
+（2）**Buffers**；
+
+（3）Scatter - Gather；
+
+（4）Channel to Channel Transfers；
+
+（5）**Selectors**；
+
+（6）FileChannel；
+
+（7）SocketChannel；
+
+（8）ServerSocketChannel；
+
+（9）Non-blocking Server Design；
+
+（10）DatagramChannel；
+
+（11）Pipe；
+
+（12）NIO vs IO；
+
+（13）Path；
+
+（14）Files；
+
+（15）AsynchronousFileChannel；
+
