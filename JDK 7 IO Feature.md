@@ -1,3 +1,20 @@
+---
+title: Java AIO summary and practice
+author: NaiveKyo
+top: false
+hide: false
+img: 'https://cdn.jsdelivr.net/gh/NaiveKyo/CDN/img/20220425110933.jpg'
+coverImg: /img/20220425110933.jpg
+cover: false
+toc: true
+mathjax: false
+date: 2023-02-23 23:45:46
+summary: "Java AIO: 初步了解 Java AIO 相关概念"
+categories: "Java"
+keywords: ["Java", "AIO"]
+tags: ["Java", "AIO"]
+---
+
 # New I/O In JDK 7
 
 参考地址：
@@ -7,6 +24,7 @@
 - https://openjdk.org/projects/nio/presentations/TS-5052.pdf
 - https://openjdk.org/projects/nio/presentations/TS-4222.pdf
 - https://jenkov.com/tutorials/java-nio/index.html
+- https://www.demo2s.com/java/java-non-blocking-socket-programming.html
 
 
 
@@ -777,3 +795,240 @@ https://jenkov.com/tutorials/java-nio/index.html
 
 （15）AsynchronousFileChannel；
 
+# Code Example
+
+## 多路复用（同步非阻塞）
+
+```java
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.nio.ByteBuffer;
+import java.nio.channels.SelectionKey;
+import java.nio.channels.Selector;
+import java.nio.channels.ServerSocketChannel;
+import java.nio.channels.SocketChannel;
+import java.nio.charset.Charset;
+import java.util.Iterator;
+import java.util.Set;
+
+/**
+ * @author NaiveKyo
+ * @version 1.0
+ * @since 2023/2/22 22:10
+ */
+public class SyncServer {
+    public static void main(String[] args) {
+        Selector selector = null;
+        ServerSocketChannel serverSocketChannel = null;
+        try {
+            selector = Selector.open();
+            serverSocketChannel = ServerSocketChannel.open();
+            serverSocketChannel.bind(new InetSocketAddress(InetAddress.getLocalHost(), 10000));
+            serverSocketChannel.configureBlocking(false);
+            serverSocketChannel.register(selector, SelectionKey.OP_ACCEPT);
+            
+            for (;;) {
+                selector.select(1000L);
+                Set<SelectionKey> selectionKeys = selector.selectedKeys();
+                Iterator<SelectionKey> itr = selectionKeys.iterator();
+                while (itr.hasNext()) {
+                    SelectionKey key = itr.next();
+                    if (key.isAcceptable()) {
+                        handleAcceptableKey(key);
+                    }
+                    if (key.isReadable()) {
+                        handleReadableKey(key);
+                    }
+                    itr.remove();
+                }
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        } finally {
+            try {
+                if (selector != null)
+                    selector.close();
+                if (serverSocketChannel != null)
+                    serverSocketChannel.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    private static void handleAcceptableKey(SelectionKey key) throws IOException {
+        SocketChannel sc = ((ServerSocketChannel) key.channel()).accept();
+        sc.configureBlocking(false);
+        sc.register(key.selector(), SelectionKey.OP_READ, ByteBuffer.allocate(1024));
+    }
+
+    private static void handleReadableKey(SelectionKey key) throws IOException {
+        SocketChannel sc = (SocketChannel) key.channel();
+        ByteBuffer buffer = (ByteBuffer) key.attachment();
+        buffer.clear();
+        int read = sc.read(buffer);
+        ByteArrayOutputStream byteArrayOS = new ByteArrayOutputStream();
+        while (read != -1) {
+            buffer.flip();
+            byte[] tmp = new byte[buffer.limit()];
+            buffer.get(tmp);
+            byteArrayOS.write(tmp);
+            buffer.clear();
+            read = sc.read(buffer);
+        }
+        String data = new String(byteArrayOS.toByteArray(), Charset.defaultCharset());
+        System.out.println("Server: receive data -> " + data);
+        buffer.clear();
+        sc.close();
+    }
+}
+```
+
+## 异步非阻塞
+
+下面展示了 AIO 版的客户端代码，有几个注意点：
+
+- 在 CompletionHandler 中 attachement 非常重要；
+- 流程和上面的类似，先等待 connection accept，然后等到 ready 状态，可以读取了才开始读数据，读取的时候一次 CompletionHandler 不一定能够读完，要分几次读取，读完了 read = -1，最后清理资源；
+- AIO 中没有 SelectionKey，需要我们来判断触发了 CompletionHandler 时 client 的状态，是刚连接，还是已经可以读取了？
+
+```java
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.SocketAddress;
+import java.nio.ByteBuffer;
+import java.nio.channels.AsynchronousChannelGroup;
+import java.nio.channels.AsynchronousServerSocketChannel;
+import java.nio.channels.AsynchronousSocketChannel;
+import java.nio.channels.CompletionHandler;
+import java.nio.charset.Charset;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * @author NaiveKyo
+ * @version 1.0
+ * @since 2023/2/23 21:57
+ */
+public class AsyncServer {
+    
+    public static void main(String[] args) {
+        AsynchronousChannelGroup group = null;
+        AsynchronousServerSocketChannel server = null;
+        try {
+            group = AsynchronousChannelGroup.withThreadPool(Executors.newFixedThreadPool(100));
+            server = AsynchronousServerSocketChannel.open(group);
+
+            InetSocketAddress addr = new InetSocketAddress(InetAddress.getLocalHost(), 10000);
+            server.bind(addr);
+            System.out.printf("Server is listening at %s%n", addr);
+
+            Attachment attach = new Attachment();
+            attach.server = server;
+            // Accept new connections
+            server.accept(attach, new ConnectionHandler());
+
+            // 如果不用 group, 仅使用单个 AsynchronousServerSocketChannel, 可以使用 Thread.currentThread().join(); 
+            group.awaitTermination(Long.MAX_VALUE, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            try {
+                if (group != null)
+                    group.shutdown();
+                if (server != null)
+                    server.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    static class Attachment {
+        AsynchronousServerSocketChannel server;
+        AsynchronousSocketChannel client;
+        ByteBuffer buffer;
+        SocketAddress clientAddr;
+        ByteArrayOutputStream baos;
+        boolean isRead;
+    }
+
+    static class ConnectionHandler implements CompletionHandler<AsynchronousSocketChannel, Attachment> {
+        @Override
+        public void completed(AsynchronousSocketChannel client, Attachment attachment) {
+            try {
+                SocketAddress clientAddr = client.getRemoteAddress();
+                System.out.printf("Accepted a connection from %s%n", clientAddr);
+
+                // Accept another connection
+                attachment.server.accept(attachment, this);
+                
+                // Handle the client connection by using an asyn read
+                ReadHandler readHandler = new ReadHandler();
+                Attachment newAttach = new Attachment();
+                newAttach.server = attachment.server;
+                newAttach.client = client;
+                newAttach.buffer = ByteBuffer.allocate(1024);
+                newAttach.isRead = true;
+                newAttach.baos = new ByteArrayOutputStream();
+                newAttach.clientAddr = clientAddr;
+                client.read(newAttach.buffer, newAttach, readHandler);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+
+        @Override
+        public void failed(Throwable exc, Attachment attachment) {
+            exc.printStackTrace();
+        }
+    }
+
+    static class ReadHandler implements CompletionHandler<Integer, Attachment> {
+        @Override
+        public void completed(Integer result, Attachment attachment) {
+            if (result == -1) {
+                try {
+                    attachment.client.close();
+                    String data = new String(attachment.baos.toByteArray(), Charset.defaultCharset());
+                    System.out.println("Server accept data: " + data);
+                    attachment.baos = null;
+                    System.out.printf("Stopped listening to the client %s%n", attachment.clientAddr);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+                return;
+            }
+
+            if (attachment.isRead) {
+                // A read to the client was completed.
+                // Get the buffer ready to read from it
+                attachment.buffer.flip();
+                byte[] tmp = new byte[attachment.buffer.limit()];
+                try {
+                    attachment.buffer.get(tmp);
+                    attachment.baos.write(tmp);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+                attachment.buffer.clear();
+                // continue read
+                attachment.isRead = false;
+            } else {
+                attachment.isRead = true;
+                attachment.buffer.clear();
+            }
+            attachment.client.read(attachment.buffer, attachment, this);
+        }
+
+        @Override
+        public void failed(Throwable exc, Attachment attachment) {
+            exc.printStackTrace();
+        }
+    }
+}
+```
