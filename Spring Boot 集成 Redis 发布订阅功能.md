@@ -281,11 +281,40 @@ pub/sub：https://docs.spring.io/spring-data/redis/docs/2.7.7/reference/html/#pu
 
 Spring Data 项目为 Redis 提供了专门的 Spring 消息集成，和之前学习的 Spring JMS 集成类似。
 
-两种调用形式：
-
-- `org.springframework.data.redis.core.RedisTemplate#convertAndSend` 方法；
-- `org.springframework.data.redis.connection.RedisConnection#publish/subscribe`  方法
-
 先简单了解一下 Redis 的 Pub/Sub：https://redis.io/docs/manual/pubsub/
 
-注意 Redis pub/sub 和 key space（database & scoping）无关
+注意 Redis pub/sub 和 key space（database & scoping）无关，它不会干扰任何数据库，这就意味着在 db0 中 publish，在 db10 中也可以 subscribe。并且这些数据也不会被持久化。发布的消息只会消费一次。
+
+> 发布消息
+
+发布消息很简单，两种调用形式：
+
+- `org.springframework.data.redis.core.RedisTemplate#convertAndSend` 方法；
+- `org.springframework.data.redis.connection.RedisConnection#publish`  方法；
+
+> 接收消息
+
+接收消息也有两种方式：
+
+（1）在低层次上，调用 RedisConnection 的 subscribe 和 pSubscribe 方法，它们是 Redis 相关命令在 Spring 中的实现，可以通过 channel 或 pattern 订阅；
+
+**但是需要注意**：在 Spring Data Redis 项目中调用这些方法会阻塞当前线程，一直等待消息的到来，明显不太适合实际环境，好在 Spring Data Redis 为我们提供了另一种方式；
+
+（2）RedisMessageListenerContainer 和 RedisMessageListenerAdapter
+
+**RedisMessageListenerContainer ：**
+
+和集成 JMS 时类似，Spring 也提供了 listener container 和 listener adapter，前者维护了一组接收消息的线程，并将接收到的消息分派给 listener 处理消息。message listener container 是 MDP 和 messaging provider 之间的中间层，负责注册以接收消息、资源获取和释放、异常转换等。这样开发者就只需要关注消息接收和处理逻辑了。
+
+MessageListener 这个接口也比较特殊，它的实现不仅可以监听常规消息，来可以监听一些特殊的消息，比如取消订阅的消息。
+
+此外为了提供性能，RedisMessageListenerContainer 可以让一个 connection 或一个 thread 在多个 listeners 之间共享，这样就不用频繁创建 connection 或 thread 了（资源池的应用）。此外 container 还允许在程序运行时修改其配置，这样就不用重启应用了。
+
+container 为异步消息处理提供了支持，但是需要提供一个 `java.util.concurrent.Executor`（或者 Spring 的 `TaskExecutor`）来分派消息。根据负载、listener 的数量或运行时环境，您应该更改或调整执行程序以更好地满足您的需求。
+
+**RedisMessageListenerAdapter：**
+
+RedisMessageListenerAdapter 是 Spring 异步消息处理的一个重要的组件，简而言之，它允许开发者将任意的 class 作为 MDP（事件驱动的 POJO）使用（尽管有一些限制）。
+
+下面看例子：
+
