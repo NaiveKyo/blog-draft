@@ -1,3 +1,20 @@
+---
+title: Spring Boot Integate Redis Pub/Sub Feature
+author: NaiveKyo
+top: false
+hide: false
+img: 'https://cdn.jsdelivr.net/gh/NaiveKyo/CDN/img/20220425111059.jpg'
+coverImg: /img/20220425111059.jpg
+cover: false
+toc: true
+mathjax: false
+date: 2023-03-01 23:23:18
+summary: "Spring Boot 集成 Redis 发布订阅功能"
+categories: "Redis"
+keywords: ["Redis", "Spring Boot"]
+tags: ["Redis", "Spring Boot"]
+---
+
 # Prerequirement
 
 - Docker 环境；
@@ -113,7 +130,7 @@ public class RedisAutoConfiguration {
 }
 ```
 
-可以看到它向容器中注入了两个 RedisTemplate（注：`StringRedisTemplate extends RedisTemplate<String, String>`）。
+可以看到它向容器中注入了两个 RedisTemplate（注：`StringRedisTemplate extends RedisTemplate<String, String>`），并且在类上方的 `@Import` 注解中引入了 Lettuce 或 Jedis 相关依赖（这两个依赖都可以提供连接 Redis 服务的能力）；
 
 一般情况下我们会对 RedisTemplate 进行某个定制化处理，比如序列化操作。
 
@@ -230,10 +247,6 @@ public class StringRedisTemplate extends RedisTemplate<String, String> {
 下面定制我们自己的使用 Jackson 序列化的 RedisTemplate：
 
 ```java
-import org.springframework.boot.autoconfigure.AutoConfigureBefore;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnSingleCandidate;
-import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
@@ -246,12 +259,9 @@ import org.springframework.data.redis.serializer.RedisSerializer;
  * @since 2023/2/26 23:37
  */
 @Configuration(proxyBeanMethods = false)
-@AutoConfigureBefore(value = RedisAutoConfiguration.class)
 public class RedisConfiguration {
     
     @Bean
-    @ConditionalOnMissingBean(name = "redisTemplate")
-    @ConditionalOnSingleCandidate(RedisConnectionFactory.class)
     public RedisTemplate<Object, Object> redisTemplate(RedisConnectionFactory redisConnectionFactory) {
         RedisTemplate<Object, Object> template = new RedisTemplate<>();
         template.setConnectionFactory(redisConnectionFactory);
@@ -269,9 +279,18 @@ public class RedisConfiguration {
 
 由于 Jackson 的配置较为繁琐，还没仔细研究，这里就暂时使用预定义好的利用 Jackson 的序列化器，**RedisSerializer 接口中预先定义的各种序列化器都支持处理 null objects/empty arrays 数据，也建议如果要自定义序列化器一定要考虑处理这种情况，因为 Redis 不会接收 null key 或 value，但是当 key 不存在时却会返回 null。**
 
+> 补充：JSR 107
+
+从 Spring 3.1 开始提供缓存支持，到 Spring 4.1 提供对 JSR 107 中定义的缓存注解提供了支持以及更多的定制化操作：
+
+- https://docs.spring.io/spring-framework/docs/5.2.22.RELEASE/spring-framework-reference/integration.html#cache
+- https://jcp.org/en/jsr/detail?id=107
+
 
 
 ## Spring Redis Pub/Sub
+
+### Introduction
 
 官网：https://spring.io/projects/spring-data-redis
 
@@ -304,7 +323,7 @@ Spring Data 项目为 Redis 提供了专门的 Spring 消息集成，和之前�
 
 **RedisMessageListenerContainer ：**
 
-和集成 JMS 时类似，Spring 也提供了 listener container 和 listener adapter，前者维护了一组接收消息的线程，并将接收到的消息分派给 listener 处理消息。message listener container 是 MDP 和 messaging provider 之间的中间层，负责注册以接收消息、资源获取和释放、异常转换等。这样开发者就只需要关注消息接收和处理逻辑了。
+和集成 JMS 时类似，Spring 也提供了 listener container 和 listener adapter，前者维护了一组接收消息的线程，并将接收到的消息分派给 listener 处理消息。message listener container 是 MDP 和 messaging provider 之间的中间层，负责注册与接收消息、资源获取和释放、异常转换等。这样开发者就只需要关注消息接收和处理逻辑了。
 
 MessageListener 这个接口也比较特殊，它的实现不仅可以监听常规消息，来可以监听一些特殊的消息，比如取消订阅的消息。
 
@@ -316,5 +335,137 @@ container 为异步消息处理提供了支持，但是需要提供一个 `java.
 
 RedisMessageListenerAdapter 是 Spring 异步消息处理的一个重要的组件，简而言之，它允许开发者将任意的 class 作为 MDP（事件驱动的 POJO）使用（尽管有一些限制）。
 
+### Example
+
 下面看例子：
+
+```java
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.listener.ChannelTopic;
+import org.springframework.data.redis.listener.RedisMessageListenerContainer;
+import org.springframework.data.redis.listener.adapter.MessageListenerAdapter;
+import org.springframework.data.redis.serializer.RedisSerializer;
+
+@Slf4j
+@Configuration(proxyBeanMethods = false)
+public class RedisConfiguration {
+
+    public static final String SPECIAL_CHANNEL_NAME = "my_test_channel";
+    
+    @Bean
+    @ConditionalOnMissingBean(name = "redisTemplate")
+    public RedisTemplate<Object, Object> redisTemplate(RedisConnectionFactory redisConnectionFactory) {
+        RedisTemplate<Object, Object> template = new RedisTemplate<>();
+        template.setConnectionFactory(redisConnectionFactory);
+        
+        template.setKeySerializer(RedisSerializer.json());
+        template.setValueSerializer(RedisSerializer.json());
+        template.setHashKeySerializer(RedisSerializer.json());
+        template.setHashValueSerializer(RedisSerializer.json());
+        
+        return template;
+    }
+
+
+    @Bean
+    public RedisMessageListenerContainer redisMessageListenerContainer(RedisConnectionFactory redisConnectionFactory, MessageListenerAdapter messageListenerAdapter) {
+        RedisMessageListenerContainer container = new RedisMessageListenerContainer();
+        // 设置 RedisConnectionFactory
+        container.setConnectionFactory(redisConnectionFactory);
+        // 注册一个 map: MessageListener -> Channel/Pattern
+        container.addMessageListener(messageListenerAdapter, ChannelTopic.of(SPECIAL_CHANNEL_NAME));
+        return container;
+    }
+
+    @Bean
+    public MessageListenerAdapter messageListenerAdapter() {
+        MessageListenerAdapter adapter = new MessageListenerAdapter(new MessageProcessor(), "handleMessage");
+        adapter.setSerializer(RedisSerializer.json());
+        return adapter;
+    }
+
+    static class MessageProcessor {
+        public void handleMessage(String message) {
+            // do something ...
+            log.info("handle received message...");
+        }
+    }
+}
+```
+
+这一次我们向容器中注入了两个 Bean：
+
+（1）`RedisMessageListenerContainer`；
+
+从 RedisConnection 处接收 subscribe channel 的 message 并分发给内部注册的 MessageListener，这里我们向 container 中注入了 `messageListenerAdapter` 和 `ChannelTopic.of(SPECIAL_CHANNEL_NAME)` 这一种处理关系；
+
+（2）`MessageListenerAdapter`；
+
+实现了 `MessageListener` 接口，同时其内部持有 delegate 对象，通过反射调用 delegate 的特定方法来处理，这个 delegate 可以是其他对象也可以是 adapter 本身；
+
+本例中指定该 adapter 的序列化工具是 `RedisSerializer.json()`，和定制 RedisTemplate 时一致，都是 Jackson，这样消息的发送和接收都能顺利执行；
+
+本例中我们定义了 `MessageProcessor` 作为消息的处理器，adapter 对 container 传递过来的消息做反序列化处理，然后反射调用该处理器的特定方法来处理消息；
+
+更多信息请参见相关类的源码注释；
+
+## 测试
+
+Spring 配置：application.yml
+
+```yml
+server:
+  port: 10000
+  
+spring:
+  mvc:
+    servlet:
+      load-on-startup: 1
+
+  redis:
+    password: 123456
+    port: 6379
+    host: 192.168.154.3
+    database: 0
+```
+
+TestController：
+
+```java
+@RestController
+public class TestController {
+    
+    @Resource
+    private RedisTemplate<String, String> redisTemplate;
+    
+    @GetMapping("/hello")
+    public String sayHello() {
+        return "hello world";
+    }
+    
+    @GetMapping("/publish-message")
+    public String publishMessage() {
+        this.redisTemplate.convertAndSend(RedisConfiguration.SPECIAL_CHANNEL_NAME, "hello world!");
+        return "ok";
+    }
+    
+}
+```
+
+注意：这里用的是 `@Resource` 注解，先根据 bean 名称注入，找不到再根据类型，最终注入的就是我们定制的 `RedisTemplate`；
+
+如果使用 `@Autowire` 注解，导入的就可能是 `StringRedisTemplate` 实例了，因为这里做了编译期泛型擦除，运行时类型和 `StringRedisTemplate` 一致，会影响消息的序列化和反序列化。
+
+运行 SpringBoot 服务，浏览器访问：`http://localhost:10000/publish-message`
+
+程序打印：
+
+```
+2023-03-01 23:02:26.953  INFO 8004 --- [enerContainer-1] i.n.r.config.RedisConfiguration          : handle received message...
+```
 
