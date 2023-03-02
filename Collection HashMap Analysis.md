@@ -75,7 +75,7 @@ public void test3() {
 null -> null
 ```
 
-哈希表的 Map 实现可以保证常量时间复杂度的 get 和 put 操作（前提是假设使用的 hash 映射函数可以很好的将元素分散到不同的 bucket 中，注：HashMap 中使用 bucket 来形容存储元素的容器。）如果想要遍历 HashMap 中的所有元素，则需要先获取相应的 collection-view，且遍历花费的时间和 HashMap 的容量即 bucket 的数量加上 HashMap 的 size 即 key-value-mapping 的数量成正比。
+哈希表的 Map 实现可以保证常量时间复杂度的 get 和 put 操作（前提是假设使用的 hash 映射函数可以很好的将元素分散到不同的 bucket 中，注：HashMap 中使用 bucket，也叫 bin 来形容存储元素的容器。）如果想要遍历 HashMap 中的所有元素，则需要先获取相应的 collection-view，且遍历花费的时间和 HashMap 的容量即 bucket 的数量加上 HashMap 的 size 即 key-value-mapping 的数量成正比。
 
 因此，在构建 HashMap 实例时，最好不要把初始容量（initial capacity）设置的太大，或者负载因子（load factor）设置的太小。这对迭代性能影响很大。
 
@@ -93,7 +93,7 @@ null -> null
 
 作为一个通用的规则，load factor 的默认值是 0.75，此时在时间和空间上会有很好的权衡。load factor 较高则空间消耗会降低，但是会增加查找成本（对应 HashMap 类中大多数操作都会变慢，包括 get 和 put）。
 
-在设置 Map 的初始容量时，应考虑  Map 中的预期条目数及其负载系数，从而尽量减少发生 rehashed 的次数。**如果初始容量大于预期存储最大条目数除以负载因子，则不会发生重新散列操作**。
+在设置 Map 的初始容量时，应考虑  Map 中的预期条目数及其负载系数，从而尽量减少发生 rehashed 的次数。**如果初始容量大于预期存储最大条目数除以负载因子，则不会发生重新散列操作**。（`initialCapacity = (expectCapacity / loadFactor) + 1F`）
 
 如果我们要使用 HashMap 存储很多的键值对，给与 HashMap 一个足够大的初始容量可以避免再哈希的发生，性能上会提高很多。
 
@@ -161,7 +161,9 @@ static final float DEFAULT_LOAD_FACTOR = 0.75f;
 static final int TREEIFY_THRESHOLD = 8;
 ```
 
-bin 树化的阈值，超过了该阈值，则 bins 由原来的 list of bin 转变为 tree bin。当某个 bin 加入了一个新的 node，然后该 bin 中 node 的数量超过了这个阈值，bin 就会树化。
+bin 树化的阈值，超过了该阈值，则 bins 由原来的 list of bin 转变为 tree bin。当某个 bin 拥有了足够多数量的 node 时，此时加入了一个新的 node，bin 就会树化。
+
+（就是 HashMap 的一个 bucket 树化的阈值）
 
 该参数应该大于 2 且至少为 8。
 
@@ -179,7 +181,7 @@ bin untreeifying 的阈值。该参数必须小于 TREEIFY_THRESHOLD，且至少
 static final int MIN_TREEIFY_CAPACITY = 64;
 ```
 
-当 table 的容量大于该值时，bins 就会树形化（Otherwise the table is resized if too many nodes in a bin.）。该值至少为 4 * TREEIFY_THRESHOLD 避免调整大小和树状化阈值之间的冲突。
+当 table 的容量大于该值时，bins 就会树形化（Otherwise the table is resized if too many nodes in a bin.）。该值至少为 4 * TREEIFY_THRESHOLD 避免 resizing 和 treeification thresholds 之间的冲突。
 
 ## 结点定义
 
@@ -248,9 +250,9 @@ static class Entry<K,V> extends HashMap.Node<K,V> {
 }
 ```
 
-可以看到这个 Entry 扩展了前面的 Node，增加了 before 和 after 两个链接，并提供了新的构造方法，这样 HashMap 中的 Entry 中一共有三个链接了：before、next、after；
+可以看到这个 Entry 扩展了前面的 Node，增加了 before 和 after 两个链接，并提供了新的构造方法，这样 HashMap 中的 Entry 中一共有三个链接了：before、next、after（二叉查找树的 2-3 结点树）；
 
-然后看看 HashMap.Entry：
+然后看看 HashMap.Entry（红黑树结点）：
 
 ```java
 static final class TreeNode<K,V> extends LinkedHashMap.Entry<K,V> {
@@ -269,8 +271,6 @@ static final class TreeNode<K,V> extends LinkedHashMap.Entry<K,V> {
 
 可以看到这是一种红黑树的实现；
 
-TODO
-
 ## 静态工具方法
 
 ### （1）计算 hash 值的方法；
@@ -282,7 +282,7 @@ static final int hash(Object key) {
 }
 ```
 
-通过 key.hashCode 高位分散到低位来减少 hash 冲突，更多信息参考源码注释。
+该方法计算 HashMap 的 key 的 hash 值，主要通过 key.hashCode 高位分散到低位来减少 hash 冲突，更多信息参考源码注释。
 
 ### （2）检测类型的方法；
 
@@ -307,9 +307,11 @@ static Class<?> comparableClassFor(Object x) {
 }
 ```
 
-可以看到这这个方法的主要目的是检测 x 对象是 Comparable 类型的；
+可以看到这这个方法的主要目的是检测 x 对象的 Class 类型，如果它是 `class C implements Comparable` 的形式就返回它的 Class 对象，否则返回 null；
 
-方法内部首先检测如果是 String 就不需要检测了，如果对象 x 实现的接口或者代表的接口泛型是类似 `T<X>` 这样的，则检测其泛型 `X` 是否是 `Comparable.class`，如果是就直接返回，如果不是则返回 null。
+如果 c 是 String.class 直接就绕过检查了，因为 String 本身的 hashcode 是被缓存的，且继承了 Comparable 接口，重写了 compare 方法；
+
+如果不是 String，就先获取该 Class 实现的所有接口泛型，因为 `Comparable<T>` 就是泛型接口，然后对其实现的每个泛型接口进行判断是不是 Comparable.class，已经 Comparable 的那个 T 的泛型参数是不是有效的。
 
 ### （3）进行 compare 的方法；
 
@@ -345,7 +347,7 @@ static final int tableSizeFor(int cap) {
 transient Node<K,V>[] table;
 ```
 
-table 其实就表示 list of bin 或者 tree bin，它是懒初始化的，一般只有第一个使用 HashMap 或者 resize 的时候会进行调整。在实例化时，它的 length 是 2 的幂。
+table 其实就表示 list of bins 或者 tree bins，它是懒初始化的，一般只有第一次使用 HashMap 或者 resize 的时候会进行调整。在实例化时，它的 length 是 2 的幂。
 
 ### （2）entrySet；
 
@@ -361,7 +363,7 @@ Map 的 collection-view 中保存 entry 的 set；
 transient int size;
 ```
 
-Map 持有的键值对的数量；
+Map 持有的键值对的数量；（也就是所有 bin 中的所有 entry 的总数量）
 
 ### （4）modCount；
 
@@ -369,7 +371,7 @@ Map 持有的键值对的数量；
 transient int modCount;
 ```
 
-当 HashMap 的结构出现变化（树化或反树化）或者保存的键值对的数量发生变化就会使用到这个值。在使用集合视图进行迭代的时候，也是根据这个字段来决定是否 fail-fast 的（抛出 ConcurrentModificationException）；
+记录 HashMap 发生结构修改的次数，什么是结构修改呢？就是 HashMap 的 key-value mapping 的数量发生了变化或者内部的机构发生改变（比如：增删 entry，或 rehash）。这个属性的作用就是在遍历 HashMap 的集合视图的时候，判断是否需要 fail-fast。（比如发生了 ConcurrentModificationException）
 
 ### （5）threshold；
 
@@ -415,12 +417,11 @@ public HashMap(int initialCapacity) {
     this(initialCapacity, DEFAULT_LOAD_FACTOR);
 }
 
+// 这里有个特殊的构造方法是构造了一个空的 HashMap，之前提到过 HashMap 是懒初始化的，在 put 元素时会检查是否需要初始化 table。
 public HashMap() {
 	this.loadFactor = DEFAULT_LOAD_FACTOR; // all other fields defaulted
 }
 ```
-
-这里有个特殊的构造方法是构造了一个空的 HashMap，之前提到过 HashMap 是懒初始化的，在 put 元素时会检查是否需要初始化 table。
 
 ```java
 public HashMap(Map<? extends K, ? extends V> m) {
@@ -454,9 +455,19 @@ final void putMapEntries(Map<? extends K, ? extends V> m, boolean evict) {
 - HashMap 是空的，且已知要插入元素的数量，通过 `float ft = ((float)s / loadFactor) + 1.0F;` 可以为新的 HashMap 指定一个初始容量，减少 HashMap 的结构变化次数，提高一定的性能；
 - 如果 HashMap 不是空的，则进行比较 `s > threshold` 来判断是否需要 `resize()`，resize 会将 table 的 size 增长 2 倍；
 
-### （2）get
+### （2）size
 
-根据 key 获取对应的 value：
+```java
+public int size() {
+    return size;
+}
+```
+
+很简单，获取 HashMap 中所有 key-value mapping 的数量；
+
+### （3）get
+
+根据 key 获取对应的 value，如果没有存对应的 mapping 就返回 null，否则返回 value；
 
 ```java
 public V get(Object key) {
@@ -493,7 +504,19 @@ final Node<K,V> getNode(int hash, Object key) {
 }
 ```
 
-根据前面了解的知识来看这个方法的逻辑，`tab` 指向当前的 table 数组（i.e. list of bin），n 就是 table 数组的长度，而 `first = tab[(n - 1) & hash]` 则计算目标 key 映射到当前 table 的位置对应的 Node 元素，这个 hash 值的计算使用了键的 hashCode。
+这个方法的判断逻辑是这样的：
+
+（1）首先我们的 HashMap 必须是有 bin 的，也就是 table 不能为空且 bin 的数量大于 0；
+
+（2）然后我们根据 hash 函数映射，找到该 key 对应的 bin：`first = tab[(n - 1) & hash]`，first 就是这个 bin 的头部，也就是前面提到的 `java.util.HashMap.Node`；
+
+（3）如果这个 first 确实存在，它有三种情况，要么是一个只有一个结点的链表，要么是多个结点的链表，要么是多结点的红黑树，首先比较 first 结点是否和 key 对应，比较顺序为：
+
+- 先比较 Node 的 hash 值，前面了解过，这个 first.hash 是根据 key 和 value 的 hashcode 方法计算得来
+
+
+
+根据前面了解的知识来看这个方法的逻辑，`tab` 指向当前的 table 数组（i.e. list of bin），n 就是 table 数组的长度，而 `first = tab[(n - 1) & hash]` 则计算目标 key 映射到当前 table 的位置对应的 bin 的首个 node，这个 hash 值的计算使用了键的 hashCode。
 
 比对顺序是这样的：`hash -> key -> equals`，如果匹配上了就返回对应的 Node，如果没能匹配上 first，我们假设可能发生了 hash 冲突，就沿着 Node 链继续向下找，找的时候还要考虑 Node 的类型，是常规的 Node ？还是树化的 TreeNode ？
 
