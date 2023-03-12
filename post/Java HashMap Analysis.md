@@ -1,16 +1,19 @@
-# 前言
-
-研究 Java HashMap 源码，了解相关特性，以及在 JDK 7 和 JDK 8 中的不同实现方式，切换方式的原因。
-
-
-
-后续工作：
-
-（1）研究引用对象；
-
-（2）研究 Java 的并发相关工具；
-
-
+---
+title: Java Collection HashMap Analysis
+author: NaiveKyo
+top: false
+hide: false
+img: 'https://cdn.jsdelivr.net/gh/NaiveKyo/CDN/img/20220425111113.jpg'
+coverImg: /img/20220425111113.jpg
+cover: false
+toc: true
+mathjax: false
+date: 2023-03-12 17:33:46
+summary: "Java HashMap 源码分析"
+categories: "Java"
+keywords: "Java"
+tags: "Java"
+---
 
 # Map
 
@@ -161,7 +164,7 @@ static final float DEFAULT_LOAD_FACTOR = 0.75f;
 static final int TREEIFY_THRESHOLD = 8;
 ```
 
-bin 树化的阈值，超过了该阈值，则 bins 由原来的 list of bin 转变为 tree bin。当某个 bin 拥有了足够多数量的 node 时，此时加入了一个新的 node，bin 就会树化。
+bin 树化的阈值，超过了该阈值，则 bins 由原来的 list of node 转变为 tree node。当某个 bin 拥有了足够多数量的 node 时，此时加入了一个新的 node，bin 就会树化。
 
 （就是 HashMap 的一个 bucket 树化的阈值）
 
@@ -181,7 +184,12 @@ bin untreeifying 的阈值。该参数必须小于 TREEIFY_THRESHOLD，且至少
 static final int MIN_TREEIFY_CAPACITY = 64;
 ```
 
-当 table 的容量大于该值时，bins 就会树形化（Otherwise the table is resized if too many nodes in a bin.）。该值至少为 4 * TREEIFY_THRESHOLD 避免 resizing 和 treeification thresholds 之间的冲突。
+向 map 中 put 新的元素，一旦对应的 bin 触发了树化操作（即单个 bin 内 node 数量 > TREEIFY_THRESHOLD），就会将当前 hash 表的长度（即 `table[].length`） 和该值进行比较；
+
+- tab.len < MIN_TREEIFY_CAPACITY：就会触发整个 hash 表的 resize 操作，扩容并迁移旧表数据；
+- tab.len > MIN_TREEIFY_CAPACITY：就会触发当前 bin 的树化操作。
+
+该值至少为 4 * TREEIFY_THRESHOLD 避免 resizing 和 treeification thresholds 之间的冲突。
 
 ## 结点定义
 
@@ -273,7 +281,7 @@ static final class TreeNode<K,V> extends LinkedHashMap.Entry<K,V> {
 
 ## 静态工具方法
 
-### （1）计算 hash 值的方法；
+### （1）hash
 
 ```java
 static final int hash(Object key) {
@@ -284,7 +292,7 @@ static final int hash(Object key) {
 
 该方法计算 HashMap 的 key 的 hash 值，主要通过 key.hashCode 高位分散到低位来减少 hash 冲突，更多信息参考源码注释。
 
-### （2）检测类型的方法；
+### （2）comparableClassFor
 
 ```java
 static Class<?> comparableClassFor(Object x) {
@@ -323,7 +331,7 @@ static int compareComparables(Class<?> kc, Object k, Object x) {
 }
 ```
 
-### （4）规范化初始容量的方法；
+### （4）tableSizeFor
 
 ```java
 static final int tableSizeFor(int cap) {
@@ -512,25 +520,258 @@ final Node<K,V> getNode(int hash, Object key) {
 
 （3）如果这个 first 确实存在，它有三种情况，要么是一个只有一个结点的链表，要么是多个结点的链表，要么是多结点的红黑树，首先比较 first 结点是否和 key 对应，比较顺序为：
 
-- 先比较 Node 的 hash 值，前面了解过，这个 first.hash 是根据 key 和 value 的 hashcode 方法计算得来
+- 先比较 Node 的 hash 值，这个 hash 是用 hash() 方法计算出来的，和 key 的 hashcode 有关，后面再讲，hash 相同的同时需要保证 key 的 Node.key 是相同的引用，或者 equals 返回 true；如果最终结果为 true，则说明目标 key 在 Map 中确实存在，且为某个 bin 的首结点，立即返回这个 first；
+- 如果首结点没有成功匹配，则判断首结点的 next 是不是为 null，为 null 表明该 key 没有在 Map 中存在，如果不为 null，则该 bin 可能是一个多结点的链表或红黑树：
+  - 如果是链表，则继续向下找，匹配方式和 first 结点逻辑一致；
+  - 如果是树，则将 first 转换为 TreeNode，再去树中查找，`((TreeNode<K,V>)first).getTreeNode(hash, key)`
+
+```java
+final TreeNode<K,V> getTreeNode(int h, Object k) {
+    return ((parent != null) ? root() : this).find(h, k, null);
+}
+```
+
+`root()` 方法是从某个 TreeNode 结点出发找到整棵树的根结点，然后调用根结点的 `find` 方法去找
+
+```java
+final TreeNode<K,V> find(int h, Object k, Class<?> kc) {
+    TreeNode<K,V> p = this;
+    do {
+        int ph, dir; K pk;
+        TreeNode<K,V> pl = p.left, pr = p.right, q;
+        if ((ph = p.hash) > h)
+            p = pl;
+        else if (ph < h)
+            p = pr;
+        else if ((pk = p.key) == k || (k != null && k.equals(pk)))
+            return p;
+        else if (pl == null)
+            p = pr;
+        else if (pr == null)
+            p = pl;
+        else if ((kc != null ||
+                  (kc = comparableClassFor(k)) != null) &&
+                 (dir = compareComparables(kc, k, pk)) != 0)
+            p = (dir < 0) ? pl : pr;
+        else if ((q = pr.find(h, k, kc)) != null)
+            return q;
+        else
+            p = pl;
+    } while (p != null);
+    return null;
+}
+```
+
+这个树结点的查找算法就暂时不仔细研究，注意其 key 的匹配方式：
+
+```java
+else if ((pk = p.key) == k || (k != null && k.equals(pk)))
+    return p;
+```
+
+走到这个分支此时 hash 已经相等，再比较 key 的引用或者 equals 结果，除了数据结构不一样，具体涉及到 key-value mapping 的比较和链表形式是一致的。
+
+> 总结
+
+HashMap 允许最多存在一个 null 和 null 的映射，允许 value 为 null，get 的时候先比较 Node.hash（这个 hash 是使用静态工具方法 hash() 根据 key 的 hashcode 计算得来），如果 Node.hash 相同，则进一步比较 Node.key 和 key 的引用是否相同或者 equals 方法是否返回 ture，最终决定目标结点和目标 key 具有相同的 key。
 
 
 
-根据前面了解的知识来看这个方法的逻辑，`tab` 指向当前的 table 数组（i.e. list of bin），n 就是 table 数组的长度，而 `first = tab[(n - 1) & hash]` 则计算目标 key 映射到当前 table 的位置对应的 bin 的首个 node，这个 hash 值的计算使用了键的 hashCode。
+### （4）put
 
-比对顺序是这样的：`hash -> key -> equals`，如果匹配上了就返回对应的 Node，如果没能匹配上 first，我们假设可能发生了 hash 冲突，就沿着 Node 链继续向下找，找的时候还要考虑 Node 的类型，是常规的 Node ？还是树化的 TreeNode ？
+```java
+public V put(K key, V value) {
+    return putVal(hash(key), key, value, false, true);
+}
+```
 
-- 如果是常规的 Node，就沿着链表继续向后一个一个的匹配就可以；
-- 如果是 TreeNode，就调用红黑树的查找方法去找；
+向 HashMap 中添加键值对，如果 map 中已经有了相同的 key 映射，则覆盖该 key 关联的值，注意方法是有返回值的，如果返回不是 null 的值，则表明 key 之前已经存在，返回的值就是被覆盖的 value；
+
+如果返回 null 分为两种情况：
+
+- 要 put 的 key-value pair 是一个新的映射关系，Map 之前没有包含，put 执行成功；
+- 可能之前存在这样的映射，但是之前的 key 映射的 value 是 null；
+
+再看内部的 putVal 方法：
+
+```java
+final V putVal(int hash, K key, V value, boolean onlyIfAbsent,
+               boolean evict) {
+    Node<K,V>[] tab; Node<K,V> p; int n, i;
+    // 判断 HashMap 是否已经初始化了, 如果没有就调用 resize 方法初始化
+    if ((tab = table) == null || (n = tab.length) == 0)
+        n = (tab = resize()).length;
+    // 根据新 key 的 hash 值, 经过散列映射到 table 的某个 index 上, 检测这个位置的 nude 是不是 null, 是 null 就要进行分配, 否则就说明出现了哈希冲突，沿着这个 node 链或树向下找到合适的位置插入
+    if ((p = tab[i = (n - 1) & hash]) == null)
+        tab[i] = newNode(hash, key, value, null);
+    else {
+        Node<K,V> e; K k;
+        // 如果 Map 中已经存在了新 key 对应的 mapping, 则用新 value 覆盖掉旧的 mapping
+        if (p.hash == hash &&
+            ((k = p.key) == key || (key != null && key.equals(k))))
+            e = p;
+        // 如果是树的话, 就利用红黑树的插入方式插入
+        else if (p instanceof TreeNode)
+            e = ((TreeNode<K,V>)p).putTreeVal(this, tab, hash, key, value);
+        else {
+            // 如果是链的话, 就找到链的末尾插入新结点
+            for (int binCount = 0; ; ++binCount) {
+                if ((e = p.next) == null) {
+                    p.next = newNode(hash, key, value, null);
+                    if (binCount >= TREEIFY_THRESHOLD - 1) // -1 for 1st
+                        treeifyBin(tab, hash);
+                    break;
+                }
+                if (e.hash == hash &&
+                    ((k = e.key) == key || (key != null && key.equals(k))))
+                    break;
+                p = e;
+            }
+        }
+        // 如果 Map 中已经存在了新 key 对应的 mapping, 则根据选项采取策略
+        if (e != null) { // existing mapping for key
+            V oldValue = e.value;
+            // 旧的 value 不存在或者为 null, 直接覆盖
+            if (!onlyIfAbsent || oldValue == null)
+                e.value = value;
+            // LinkedHashMap 中实现该方法, 用于后处理
+            afterNodeAccess(e);
+            return oldValue;
+        }
+    }
+    // 前面提到 modCount 记录 HashMap 结构变化的次数, 主要用于在迭代集合视图时保证 fail-fast
+    ++modCount;
+    // 新加入一个 mapping, size 加 1, 同时 threshold 记录 HashMap 下一次扩容时的容量, 如果新加入一个 mapping, size > threshold 就需要扩容了
+    if (++size > threshold)
+        resize();
+    // LinkedHashMap 中实现该方法
+    afterNodeInsertion(evict);
+    return null;
+}
+```
 
 
 
+### （5）resize
+
+resize 是 HashMap 的初始化和扩容方法：
+
+- 初始化的时候，分配前面提到的 threshold 字段存储的值的容量的 table；
+
+- 扩容的时候 table 自动扩大两倍。
+
+除此之外，由于遵循 2 的幂扩张机制，原来 bin 中的所有元素再扩容后，要么和原来保持相同的 index，要么移动 2 的幂的偏移量。
+
+源码：
+
+```java
+final Node<K,V>[] resize() {
+    // 备份旧的 hash 表
+    Node<K,V>[] oldTab = table;
+    int oldCap = (oldTab == null) ? 0 : oldTab.length;
+    int oldThr = threshold;
+    int newCap, newThr = 0;
+    if (oldCap > 0) {
+        if (oldCap >= MAXIMUM_CAPACITY) {
+            threshold = Integer.MAX_VALUE;
+            return oldTab;
+        }
+        // 扩容策略: 2 的幂机制, 直接在旧的基础上增大两倍
+        else if ((newCap = oldCap << 1) < MAXIMUM_CAPACITY &&
+                 oldCap >= DEFAULT_INITIAL_CAPACITY)
+            newThr = oldThr << 1; // double threshold
+    }
+    else if (oldThr > 0) // initial capacity was placed in threshold
+        newCap = oldThr;
+    else {               // zero initial threshold signifies using defaults
+        newCap = DEFAULT_INITIAL_CAPACITY;
+        newThr = (int)(DEFAULT_LOAD_FACTOR * DEFAULT_INITIAL_CAPACITY);
+    }
+    if (newThr == 0) {
+        float ft = (float)newCap * loadFactor;
+        newThr = (newCap < MAXIMUM_CAPACITY && ft < (float)MAXIMUM_CAPACITY ?
+                  (int)ft : Integer.MAX_VALUE);
+    }
+    threshold = newThr;
+    // 为扩容后的 hash 表分配内存空间
+    @SuppressWarnings({"rawtypes","unchecked"})
+    Node<K,V>[] newTab = (Node<K,V>[])new Node[newCap];
+    table = newTab;
+    //  执行扩容操作: 将旧表中的元素迁移到新表中
+    if (oldTab != null) {
+        for (int j = 0; j < oldCap; ++j) {
+            Node<K,V> e;
+            if ((e = oldTab[j]) != null) {
+                oldTab[j] = null;
+                if (e.next == null)
+                    newTab[e.hash & (newCap - 1)] = e;
+                else if (e instanceof TreeNode)
+                    ((TreeNode<K,V>)e).split(this, newTab, j, oldCap);
+                else { // preserve order
+                    Node<K,V> loHead = null, loTail = null;
+                    Node<K,V> hiHead = null, hiTail = null;
+                    Node<K,V> next;
+                    do {
+                        next = e.next;
+                        if ((e.hash & oldCap) == 0) {
+                            if (loTail == null)
+                                loHead = e;
+                            else
+                                loTail.next = e;
+                            loTail = e;
+                        }
+                        else {
+                            if (hiTail == null)
+                                hiHead = e;
+                            else
+                                hiTail.next = e;
+                            hiTail = e;
+                        }
+                    } while ((e = next) != null);
+                    if (loTail != null) {
+                        loTail.next = null;
+                        newTab[j] = loHead;
+                    }
+                    if (hiTail != null) {
+                        hiTail.next = null;
+                        newTab[j + oldCap] = hiHead;
+                    }
+                }
+            }
+        }
+    }
+    return newTab;
+}
+```
 
 
 
+### （6）treeifyBin
 
-进度：
+此方法用于树化 hash 表中某个链表 bin 结点：
 
-- https://docs.oracle.com/javase/8/javase-books.htm
-- https://docs.oracle.com/javase/8/docs/
-- https://docs.oracle.com/javase/8/docs/api/java/lang/ref/package-summary.html
+```java
+final void treeifyBin(Node<K,V>[] tab, int hash) {
+    int n, index; Node<K,V> e;
+    if (tab == null || (n = tab.length) < MIN_TREEIFY_CAPACITY)
+        resize();
+    else if ((e = tab[index = (n - 1) & hash]) != null) {
+        TreeNode<K,V> hd = null, tl = null;
+        do {
+            TreeNode<K,V> p = replacementTreeNode(e, null);
+            if (tl == null)
+                hd = p;
+            else {
+                p.prev = tl;
+                tl.next = p;
+            }
+            tl = p;
+        } while ((e = e.next) != null);
+        if ((tab[index] = hd) != null)
+            hd.treeify(tab);
+    }
+}
+```
+
+注意这里的单个 bin 的树化阈值是 TREEIFY_THRESHOLD，默认是 8，而 bin 的树化逻辑中必须要求整个 hash table 的长度大于等于 MIN_TREEIFY_CAPACITY，才能执行真正的树化操作，否则触发 resize；
+
