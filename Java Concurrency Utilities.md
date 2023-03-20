@@ -723,10 +723,156 @@ Starvation 描述了这样的情况：线程无法获得对共享资源的常规
 
 ## Guarded Blocks
 
+线程往往需要协调它们的 actions。最常用的协调手段是 `guarded block`。这样的代码块往往首先需要轮询一个 condition，条件为 true 时才会继续执行。要正确地做到这一点，需要遵循许多步骤。
 
+假设有个方法叫做 `guardedJoy`，它能否运行取绝于某个线程共享变量 `joy`，只有当其他线程将该变量设置为某个值时，guardedJoy 才可以继续执行。理论上，这样的方法可以简单地循环直到满足条件，但这种循环是浪费的，因为它在等待时连续执行。
+
+```java
+public void guardedJoy() {
+    // Simple loop guard. Wastes
+    // processor time. Don't do this!
+    while(!joy) {}
+    System.out.println("Joy has been achieved!");
+}
+```
+
+一个更高效的 guard 就是通过调用 `Object.wait` 方法来阻塞当前线程。在方法内部调用 wait，方法并不会立即 return 而是等待其他某个线程发出通知，告诉我们某个事件发生了 —— 虽然不一定是这个线程正在等待的事件：
+
+```java
+public synchronized void guardedJoy() {
+    // This guard only loops once for each special event, which may not
+    // be the event we're waiting for.
+    while(!joy) {
+        try {
+            wait();
+        } catch (InterruptedException e) {}
+    }
+    System.out.println("Joy and efficiency have been achieved!");
+}
+```
+
+---
+
+注意：记住必须要在循环内部调用 wait 方法，这样 wait 返回后又可以检查一下条件是否成立（可以避免线程虚假唤醒问题）。不要假设中断是为了您等待的特定条件,或者情况仍然是正确的。
+
+---
+
+就像其他可以挂起线程的方法一样，wait 也可以抛出 `InterruptedException`。在上面的例子中我们可以忽略这个异常，因为我们关心的是条件 joy 是否成立。
+
+还有，为什么第二个方法是 synchronized？假设我们要通过对象 d 调用其 wait 方法，就必须获取和 d 关联的隐式锁 —— 否则会抛出错误。将 wait 方法方在同步方法中是一种很简单的获取隐式锁的方式。
+
+当 wait 方法被调用时，线程会释放 d 的隐式锁然后挂起当前线程。在未来的某个时刻，另一个线程会获取相同的隐式锁并调用 `Object.notifyAll` 方法，通知所有在锁上等待的线程发生了重要的事情：
+
+```java
+public synchronized notifyJoy() {
+    joy = true;
+    notifyAll();
+}
+```
+
+在其他线程释放这个锁后的某个事件，第一个线程又重新获取了这个锁，然后从 wait 方法中返回。
+
+---
+
+注意：这里还有第二种通知方法：`notify`，它只能唤醒一个在等待的线程，但是要注意 notify 并不能指定唤醒某个线程，因此它在大型的并发程序中才会非常有用 —— 也就是说，具有大量线程的程序都在做类似的工作。在这样的应用程序中，您不关心哪个线程被唤醒。
+
+我们可以使用 `guarded block` 来创建简单的 `Producer-Consumer` 程序（生产者-消费者模型），这样的程序在两种线程之间共享数据：生产者线程主要用于生产数据，消费者线程主要用于消费数据。这两种线程通过共享对象来进行沟通。因此线程之间的协调就非常重要：在生产者线程交付数据之前，消费者线程不能尝试检索数据，如果消费者没有检索旧数据，生产者线程也不能尝试交付新数据。
+
+下面的例子中，数据就是文本消息序列，它们通过一个 Drop 类型的对象共享：
+
+```java
+public class ProducerConsumerModel {
+    
+    static class Drop {
+        private String message;
+        private boolean empty = true;
+        
+        public synchronized String take() {
+            while (empty) {
+                try {
+                    wait();
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+            empty = true;
+            notifyAll();
+            return message;
+        }
+        
+        public synchronized void put(String message) {
+            while (!empty) {
+                try {
+                    wait();
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+            empty = false;
+            this.message = message;
+            notifyAll();
+        }
+    }
+    
+    static class Producer implements Runnable {
+        private Drop drop;
+        
+        public Producer(Drop drop) {
+            this.drop = drop;
+        }
+
+        @Override
+        public void run() {
+            String[] importantInfo = {
+                    "Mares eat oats", "Does eat oats", "Little lambs eat ivy", "A kid will eat ivy too"
+            };
+            Random random = new Random();
+
+            for (int i = 0; i < importantInfo.length; i++) {
+                drop.put(importantInfo[i]);
+                
+                try {
+                    Thread.sleep(random.nextInt(5000));
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+            drop.put("DONE");
+        }
+    }
+    
+    static class Consumer implements Runnable {
+        private Drop drop;
+
+        public Consumer(Drop drop) {
+            this.drop = drop;
+        }
+
+        @Override
+        public void run() {
+            Random random = new Random();
+            for (String message = drop.take(); !message.equals("DONE"); message = drop.take()) {
+                System.out.printf("MESSAGE RECEIVED: %s%n", message);
+                try {
+                    Thread.sleep(random.nextInt(5000));
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+    }
+
+    public static void main(String[] args) {
+        Drop drop = new Drop();
+        (new Thread(new Producer(drop))).start();
+        (new Thread(new Consumer(drop))).start();
+    }
+}
+```
 
 
 
 进度：
 
 - https://docs.oracle.com/javase/tutorial/essential/concurrency/guardmeth.html
+
