@@ -520,7 +520,7 @@ public class SynchronizedCounter {
 
 还是之前计数器的例子，只不过在两个方法上加了 `synchronized` 关键字，这样做有两个好处：
 
-- 首先，对同一对象的同步方法的两次调用是不可能交织的。当一个线程正在为一个对象执行同步方法时，所有为同一对象调用同步方法的其他线程将暂停执行，直到第一个线程处理完该对象；
+- 首先，对同一对象的同步方法的两次调用是不可能交织的。当一个线程正在为一个对象执行同步方法时，所有使用同一对象调用同步方法的其他线程将暂停执行，直到第一个线程处理完该对象；
 - 其次，当一个同步方法退出时，它自动与同一个对象的同步方法的任何后续调用建立 happens-before 关系。这保证了对对象状态的更改对于所有线程都是可见的。
 
 注意，构造函数不能同步，在构造函数中使用 synchronized 关键字是语法错误。同步构造函数没有意义，因为只有创建对象的线程才能在构造对象时访问它。
@@ -551,9 +551,9 @@ instances.add(this);
 
 #### 同步方法锁
 
-当一个线程调用某个同步方法时，它自动获取该方法对象的内在锁，并在方法返回时释放它。即使方法的返回是由未捕获的异常引起的，也会发生锁释放。
+当一个线程调用某个同步方法时，它自动获取该方法所属对象的内在锁，并在方法返回时释放它。即使方法的返回是由未捕获的异常引起的，也会发生锁释放。
 
-您可能想知道调用静态同步方法时会发生什么，因为静态方法关联的是类，而不是方法对象。在这种情况下，线程获得与类关联的 Class 对象的内在锁。因此，对类的静态字段的访问由一个不同于类的任何实例的锁控制。
+您可能想知道调用静态同步方法时会发生什么，因为静态方法关联的是类，而不是对象。在这种情况下，线程获得与类关联的 Class 对象的内在锁。因此，对类的静态字段的访问由一个不同于类的任何实例的锁控制。
 
 #### 同步语句/同步代码块
 
@@ -683,7 +683,7 @@ Alphonse 和 Gaston 是 friends，并且都很有礼貌，有这样一种规则�
 
 当程序运行时，两个线程极有可能在试图调用 `bowBack` 方法时发生死锁，两个代码块都不会退出，因为每个线程都在等待另一个线程退出。
 
-详细分析一下是这样的，例子中使用了同步方法，锁就是和 Method Object 关联的隐式监视器对象，bow 和 bowBack 方法使用的锁都是同一个；
+详细分析一下是这样的，例子中使用了同步方法，锁就是和该方法所属 Object 关联的隐式监视器对象，bow 和 bowBack 方法使用的锁都是同一个（即对应的 Friend 类的某个实例对象关联的 Monitor 锁）；
 
 解决方法也很简单，细化锁即可：
 
@@ -705,6 +705,8 @@ public void bowBack(Friend bower) {
 }
 ```
 
+改造后的代码为每个方法单独准备了一把锁，这样就可以避免死锁问题；
+
 ### Starvation and Livelock 饥饿和活锁
 
 相比于死锁而言，Starvation 和 Livelock 发生的要更少一些，但也是每个并发软件的设计者都可能遇到的一些问题。
@@ -721,7 +723,7 @@ Starvation 描述了这样的情况：线程无法获得对共享资源的常规
 
 这就好比两个人在走廊里擦肩而过：Alphonse 向左移动让 Gaston 过去，Gaston 向右移动让 Alphonse 过去，但是并不能解决问题，所以 Alphonse 转而向右移动，而 Gaston 转而向左移动，不断循环下去。
 
-## Guarded Blocks
+## Guarded Blocks 保护块
 
 线程往往需要协调它们的 actions。最常用的协调手段是 `guarded block`。这样的代码块往往首先需要轮询一个 condition，条件为 true 时才会继续执行。要正确地做到这一点，需要遵循许多步骤。
 
@@ -870,9 +872,101 @@ public class ProducerConsumerModel {
 }
 ```
 
+注意：这里的 Drop 共享资源只是简单的示例，实际情况下我们可以使用集合框架或其他数据结构实现我们的共享资源。
+
+
+
+## Immutable Objects 不可变对象
+
+如果某个对象一旦被创建，它的状态就无法被改变，则称此类对象为 `immutable`（不可变的）。不可变对象非常适合用于一些简单的、可靠的代码。
+
+在并发编程中不可变对象非常有用，因为它们的状态不会被改变，也就意味着不会受到线程干扰的影响，多线程不会观测到不一致的状态。
+
+开发者通常不愿意使用不可变对象，因为他们担心创建新对象的成本要比在适当时候更新对象的成本更高。而且对象创建的影响经常被高估，某些时候使用不可变对象带来的好处可以抵消创建对象开销：这包括减少垃圾收集带来的开销，以及消除保护可变对象不受损坏所需的代码。
+
+下面的章节将会使用一个可变的 Class 实例以及由它派生出的不可变 Class。通过这些例子演示可变和不可变对象的转换规则以及不可变对象的一些优点。
+
+### 一个不同 Class 例子
+
+下面的类定义了表示不同颜色的对象，每个对象含有三个整型属性表示 RGB 三个通道的深度，以及一个字符串属性表示颜色值：
+
+```java
+public class SynchronizationRGB {
+    
+    // 取值范围 [0, 255]
+    private int red;
+    private int green;
+    private int blue;
+    private String name;
+    
+    public void check(int red, int green, int blue) {
+        if (red < 0 || red > 255 || green < 0 || green > 255 || blue < 0 || blue > 255)
+            throw new IllegalArgumentException();
+    }
+
+    public SynchronizationRGB(int red, int green, int blue, String name) {
+        check(red, green, blue);
+        this.red = red;
+        this.green = green;
+        this.blue = blue;
+        this.name = name;
+    }
+    
+    public void set(int red, int green, int blue, String name) {
+        this.check(red, green, blue);
+        synchronized (this) {
+            this.red = red;
+            this.green = green;
+            this.blue = blue;
+            this.name = name;
+        }
+    }
+    
+    public synchronized int getRGB() {
+        return ((this.red << 16) | (this.green << 8) | this.blue);
+    }
+    
+    public synchronized String getName() {
+        return this.name;
+    }
+    
+    public synchronized void invert() {
+        this.red = 255 - this.red;
+        this.green = 255 - this.green;
+        this.blue = 255 - this.blue;
+        name = "Inverse of " + name;
+    }
+}
+```
+
+使用这个类时需要特别注意避免状态不一致的清空，比如下面的例子：
+
+```java
+SynchronizedRGB color =
+    new SynchronizedRGB(0, 0, 0, "Pitch Black");
+...
+int myColorInt = color.getRGB();      //Statement 1
+String myColorName = color.getName(); //Statement 2
+```
+
+如果此时又另一个线程在 statement 1 和 statement  2 之间调用了 `color.set`  方法，最后就会导致 myColorInt 和 myColorName 不匹配了，为了避免这个结果，需要将这两个语句绑定在一起：
+
+```java
+synchronized (color) {
+    int myColorInt = color.getRGB();
+    String myColorName = color.getName();
+} 
+```
+
+这种不一致性仅适用于可变对象，对于 SynchronizedRGB 的不可变版本，这将不是一个问题。
+
+
+
+
+
 
 
 进度：
 
-- https://docs.oracle.com/javase/tutorial/essential/concurrency/guardmeth.html
+- https://docs.oracle.com/javase/tutorial/essential/concurrency/imstrat.html
 
