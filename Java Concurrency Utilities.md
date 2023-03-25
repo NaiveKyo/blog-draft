@@ -874,8 +874,6 @@ public class ProducerConsumerModel {
 
 注意：这里的 Drop 共享资源只是简单的示例，实际情况下我们可以使用集合框架或其他数据结构实现我们的共享资源。
 
-
-
 ## Immutable Objects 不可变对象
 
 如果某个对象一旦被创建，它的状态就无法被改变，则称此类对象为 `immutable`（不可变的）。不可变对象非常适合用于一些简单的、可靠的代码。
@@ -886,7 +884,7 @@ public class ProducerConsumerModel {
 
 下面的章节将会使用一个可变的 Class 实例以及由它派生出的不可变 Class。通过这些例子演示可变和不可变对象的转换规则以及不可变对象的一些优点。
 
-### 一个不同 Class 例子
+### Synchronization Class 例子
 
 下面的类定义了表示不同颜色的对象，每个对象含有三个整型属性表示 RGB 三个通道的深度，以及一个字符串属性表示颜色值：
 
@@ -934,12 +932,12 @@ public class SynchronizationRGB {
         this.red = 255 - this.red;
         this.green = 255 - this.green;
         this.blue = 255 - this.blue;
-        name = "Inverse of " + name;
+        this.name = "Inverse of " + this.name;
     }
 }
 ```
 
-使用这个类时需要特别注意避免状态不一致的清空，比如下面的例子：
+使用这个类时需要特别注意避免状态不一致的情况，比如下面的例子：
 
 ```java
 SynchronizedRGB color =
@@ -949,7 +947,7 @@ int myColorInt = color.getRGB();      //Statement 1
 String myColorName = color.getName(); //Statement 2
 ```
 
-如果此时又另一个线程在 statement 1 和 statement  2 之间调用了 `color.set`  方法，最后就会导致 myColorInt 和 myColorName 不匹配了，为了避免这个结果，需要将这两个语句绑定在一起：
+如果此时又另一个线程在 statement 1 和 statement  2 之间调用了 `color.set`  方法（指令重排序问题），最后就会导致 myColorInt 和 myColorName 不匹配了，为了避免这个结果，需要将这两个语句绑定在一起：
 
 ```java
 synchronized (color) {
@@ -960,7 +958,84 @@ synchronized (color) {
 
 这种不一致性仅适用于可变对象，对于 SynchronizedRGB 的不可变版本，这将不是一个问题。
 
+### 定义不可变对象的策略
 
+下面介绍一种简单的创建不可变对象的策略：
+
+1. 不提供对外的 `setter` 方法；
+2. 所有字段设置为 `private final`；
+3. 不允许扩展该类以避免重写方法。一种简单的方式是将类用 `final` 修饰，另一种更成熟的策略是用 `private` 修饰构造器并提供静态工厂方法用于构造实例；
+4. 如果实例字段包含了对可变对象的引用，不要允许这些对象发生改变：
+   - 对外不提供修改这些可变对象的方法；
+   - 不对外分享这些可变对象的引用。构造器中不要提供这些引用的参数，如果必须提供的话，可以考虑使用深拷贝。这样获取到的可变对象也和当前的不一样了。
+
+将上述策略应用到前面的 `SynchronizedRGB` 类上中需要以下步骤：
+
+1. 该 class 中存在两个 setter 方法：set 和 invert，前者已经不需要了，后者可以创建一个新的对象返回；
+2. 所有字段已经是 private 的，只需要再加上 final 即可；
+3. 类修饰上添加 final 修饰符；
+4. 有一个 String 字段已经是不可变的了，不需要管它；
+
+进行修改后，得到下面的类 `ImmutableRGB`：
+
+```java
+public final class ImmutableRGB {
+    private final int red;
+    private final int green;
+    private final int blue;
+    private final String name;
+
+    public void check(int red, int green, int blue) {
+        if (red < 0 || red > 255 || green < 0 || green > 255 || blue < 0 || blue > 255)
+            throw new IllegalArgumentException();
+    }
+
+    public ImmutableRGB(int red, int green, int blue, String name) {
+        check(red, green, blue);
+        this.red = red;
+        this.green = green;
+        this.blue = blue;
+        this.name = name;
+    }
+
+    public int getRGB() {
+        return ((this.red << 16) | (this.green << 8) | this.blue);
+    }
+
+    public String getName() {
+        return this.name;
+    }
+    
+    public ImmutableRGB invert() {
+        return new ImmutableRGB(255 -this.red, 255 - this.green, 255 - this.blue, "Inverse of " + this.name);
+    }
+}
+```
+
+
+
+## High Level Concurrency Objects
+
+前面介绍的都是 Java 平台早期引入的并发相关的 low-level APIs。使用它们可以完成一些简单基础的任务，而接下来介绍的 high-level APIs 则可以完成更复杂的任务。这对于充分利用当今多处理器和多核系统的大规模并发应用程序尤其如此。
+
+本小节介绍从 Java 1.5 引入的一些 high-level 并发特性。它们大多数都位于 `java.util.concurrent` 包下，还有一些对 Java 集合框架扩展的并发安全的集合。
+
+- `Lock objects`：支持一些简化的并发锁操作；
+- `Executors`：定义了一些 high-level API 用于创建和管理线程。而 `java.util.concurrent` 包下则提供该接口的线程池管理实现，可以用于大规模的并发应用；
+- `Concurrent collections`：用于管理大量数据的集合，并且减少了同步带来的性能损耗；
+- `Atomic variables`：尽量减小同步粒度，且可以避免内存一致性错误；
+
+- `ThreadLocalRandom`（JDK 7）：为多线程提供了高效的伪随机数生成机制；
+
+
+
+### Lock Objects
+
+用于代码同步的一种简单的可重入锁（`reentrant lock`）。这种锁使用起来很简单，但是也有一些限制。在 `java.util.concurrent.locks` 包下提供了更多用于复杂场景的锁。我们不会详细介绍这个包，而是关注于锁机制的很多基础的接口（basic interface），比如 `Lock` 接口；
+
+`Lock` 对象的功能和我们前面使用 synchronized 关键字时的隐式监视器锁的功能很像。和隐式监视器锁一样，同一时刻只有一条线程可以获得 Lock 对象，而 Lock 对象通过和它关联的 `Condition` 对象也能实现 `wait/notify` 机制。
+
+和隐式锁相比 Lock 对象能带来的最大的好处就是它允许在尝试获取锁的时候取消获取锁这一操作（多个线程要获取同一个隐式锁必须排队获取，不允许退出队列；而 Lock 锁在执行获取操作后是可以显式的退出的）。
 
 
 
@@ -968,5 +1043,5 @@ synchronized (color) {
 
 进度：
 
-- https://docs.oracle.com/javase/tutorial/essential/concurrency/imstrat.html
+- https://docs.oracle.com/javase/tutorial/essential/concurrency/newlocks.html
 
