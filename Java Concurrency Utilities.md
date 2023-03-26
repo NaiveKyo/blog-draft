@@ -1037,11 +1037,275 @@ public final class ImmutableRGB {
 
 和隐式锁相比 Lock 对象能带来的最大的好处就是它允许在尝试获取锁的时候取消获取锁这一操作（多个线程要获取同一个隐式锁必须排队获取，不允许退出队列；而 Lock 锁在执行获取操作后是可以显式的退出的）。
 
+- 通过 `tryLock` 方法获取锁时，如果无法立即获取锁或者在规定的时间内没有成功获取锁，该方法就会返回而不会阻塞线程；
+- 通过 `lockInterruptibly` 获取锁时，在获取锁之前如果另一条线程向当前线程发送了中断指令，则当前线程立即从 lockInterruptibly 方法中退出，而不会阻塞线程；
+
+下面我们使用 Lock 对象来解决之前在 `Liveness` 章节遇到的死锁问题。依旧是两个好朋友见面鞠躬打招呼的场景，要求两个 Friend 对象在 bow 之前需要获取锁：
+
+```java
+public class SafeLock {
+    static class Friend {
+        private final String name;
+        private final Lock lock = new ReentrantLock();
+
+        public Friend(String name) {
+            this.name = name;
+        }
+
+        public String getName() {
+            return name;
+        }
+        
+        public boolean impendingBow(Friend bower) {
+            boolean myLock = false;
+            boolean yourLock = false;
+            try {
+                myLock = lock.tryLock();
+                yourLock = bower.lock.tryLock();
+            } finally {
+                if (!(myLock && yourLock)) {
+                    if (myLock)
+                        lock.unlock();
+                    if (yourLock)
+                        bower.lock.unlock();
+                }
+            }
+            return myLock && yourLock;
+        }
+        
+        public void bow(Friend bower) {
+            if (this.impendingBow(bower)) {
+                try {
+                    System.out.printf("%s: %s has bowed to me!%n", this.name, bower.getName());
+                } finally {
+                    lock.unlock();
+                    bower.lock.unlock();
+                }
+            } else {
+                System.out.printf("%s: %s started to bow to me, but saw that I was already bowing to him.%n", this.name, bower.getName());
+            }
+        }
+        
+        public void bowBack(Friend bower) {
+            System.out.printf("%s: %s has bowed back to me!%n", this.name, bower.getName());
+        }
+    }
+    
+    static class BowLoop implements Runnable {
+        private Friend bower;
+        private Friend bowee;
+
+        public BowLoop(Friend bower, Friend bowee) {
+            this.bower = bower;
+            this.bowee = bowee;
+        }
+
+        @Override
+        public void run() {
+            Random random = new Random();
+            for (;;) {
+                try {
+                    Thread.sleep(random.nextInt(10));
+                } catch (InterruptedException e) {}
+                bowee.bow(bower);
+            }
+        }
+    }
+
+    public static void main(String[] args) {
+        Friend alphonse = new Friend("Alphonse");
+        Friend gaston = new Friend("Gaston");
+        
+        new Thread(new BowLoop(alphonse, gaston)).start();
+        new Thread(new BowLoop(gaston, alphonse)).start();
+    }
+}
+```
+
+### Executors
+
+在之前的例子中，线程（Thread 对象）和线程执行的任务（在 Runnable 中定义）之间有密切的联系。这种模式适合小型应用程序，一旦程序变得越来越复杂，就有必要将线程的创建和管理工作与应用程序的其他部分分开。封装了这些功能的对象叫做 `executors`。后续的章节将介绍 executor 的相关细节；
+
+- `Executor Interface`：定义了三种类型的 executor；
+- `Thread Pools`：executor 接口的实现中使用最多的类型；
+- `Fork/Join`：JDK 7 引入的框架，可以充分发挥多处理器的优势；
+
+#### Executor Interfaces
+
+`java.util.concurrent` 包下定义了三种类型的 executor 接口：
+
+- `Executor`：简单的接口，内部定义了一个方法 `execute`，能够赋予实现类启动新线程的能力；
+- `ExecutorService`：继承了 `Executor` 接口的子接口，为 executor 提供了管理生命周期的能力，包括线程池的和线程执行任务的生命周期；
+- `ScheduledExecutorServer`：继承了 `ExecutorService` 接口的子接口，为 executor 提供了执行某些任务的能力，这些任务包含在未来某个时刻执行或可以周期性执行的任务类型；
+
+通常来讲，我们使用的 Executor 对象的引用是上面这三种类型之一。
+
+> （1）Executor 接口
+
+Executor 接口中只有一个方法 execute，定义最常用的创建线程术语。
+
+```java
+public interface Executor {
+    void execute(Runnable command);
+}
+```
+
+如果提供的 r 是 Runnable 对象，那么 `e.execute(r)` 就等价于 `(new Thread(r)).start()`。
+
+但是，`execute` 的定义有些抽象，不是那么具体。如果从 low-level 层次上说明如何创建线程并立即启动线程，需要依赖于 Executor 接口的具体实现来完成。execute 方法可能会创建线程利用该线程完成工作，但更可能复用已有的工作线程来运行 Runnable，或者将 Runnable 放在队列中等待有可用的工作线程去执行。（后面在 Thread Pools 章节介绍）
+
+`java.util.concurrent` 包下面针对 Executor 的实现更多的是实现 `ExecutorService` 或者 `ScheduledExecutorService` 接口，尽管它俩都继承自 `Executor` 接口。
+
+> （2）ExecutorService 接口
+
+ExecutorService 接口提供了类似 execute 方法，但是使用范围更广的 submit 方法。和 execute 方法一样，submit 可以接收 Runnable 对象，也可以接收 Callable 对象，Callable 允许 task 返回某个值。submit 方法会返回 Futrue 对象，这种对象用于检索 Callable 执行任务后返回的值，也可以管理 Callable 和 Runnable 的状态。
+
+ExecutorService 也提供了一些方法用于提供大量的 Callable 对象（集合形式）。最后，ExecutorService 提供用于管理 executor shutdown 的方法，一旦调用了 shutdown 方法，executor 中所有正在执行的工作线程将会被立即中断（Interrupt）。
+
+> （3）ScheduledExecutorService 接口
+
+ScheduledExecutorService 接口继承了 ExecutorService 接口并提供了 schedule 方法，该方法可以延迟执行 Runnable 或者 Callable。除此之外，该接口也定义了 scheduledAtFixedRate 和 scheduleWithFixedDelay 方法用于周期性的重复执行某个任务。
+
+#### Thread Pools
+
+`java.util.concurrent` 包下面 Executor 的实现中使用最多的是 `thread pools`，它包含一组工作线程。这种线程与它要执行的 Runnable 或 Callable 任务是分开的，工作线程通常可以用于执行多个任务。
+
+使用 `work threads` 可以最小化由于线程创建造成的开销。因为线程对象会使用大量内存，在大型应用程序中，分配和释放许多线程对象会产生大量的内存管理开销。
+
+一种比较常用的线程池是 `fixed thrad pool`。这种类型的线程池中工作线程的数量是固定的。如果某个正在使用的线程被终止了，那么就会自动的创建新的线程替代它。task 通过一个内置的队列提交给线程执行，如果要执行的任务数量超过了线程池中线程的总数量，那么多余的任务将会提交到队列中。
+
+fixed thread pool 的一个很重要的优势是应用程序可以用它来 `degrade gracefully`。具体是这样的，考虑这种情形，一个 web server 应用通过不同的线程处理不同的请求。如果应用为每个新的请求都创建一个线程，一旦应用在某个时间收到了大量请求无法立即处理，当所有这些线程的开销超过系统容量时，应用程序将突然停止响应所有请求。由于可以创建的线程数量受到限制，应用程序将不能在HTTP请求进入时以最快的速度为它们提供服务，但它将以系统所能支持的最快速度为它们提供服务。
+
+可以使用 `java.util.concurrent.Executors` 类中的工厂方法 `newFixedThreadPool` 来创建 fixed thread pool，这个类还提供以下工厂方法：
+
+- `newCachedThreadPool`：该方法创建的 executor 拥有一个可以随意创建线程的线程池，这种 executor 适用于那种要执行大量耗时较短任务的程序；
+- `newSingleThreadExecutor`：该方法创建的 executor 中只有固定一条线程，同一时间只能处理一个任务；
+- 还有一些工厂方法是前面的两个 executor 的 `ScheduledExecutorService` 版本；
+
+如果 Executors 中的工厂方法无法满足开发者的需求，可以直接通过 `java.util.concurrent.ThreadPoolExecutor` 或 `java.util.concurrent.ScheduledThreadPoolExecutor` 的构造器，传递不同的参数来定制符合自己需要的线程池。
+
+#### Fork/Join
+
+fork/join 框架是 ExecutorService 的实现类，可以充分发挥系统多处理器的优势。它适用于可以切分为多个子任务的 task。具体目的就是利用多个可用的处理器来增强应用的性能。
+
+和其他 `ExecutorService` 的实现一样，fork/join 使用一个内置的线程池来将要执行的任务分派给工作线程。但是 fork/join 框架又一个非常重要的特定，它使用了 `work-stealing` 算法，具体过程就是如果某个工作线程完成了任务即将处于空闲状态，它可以通过窃取其他线程的任务来使自己忙碌起来，这样就可以充分利用所有的线程迅速完成任务；
+
+> 常规使用
+
+使用 fork/join 的代码类似下面这样的结构：
+
+```java
+if (my portion of the work is small enough)
+  do the work directly
+else
+  split my work into two pieces
+  invoke the two pieces and wait for the results
+```
+
+我们可以使用 `ForkJoinTask` 的子类来封装上述操作，它的常用的子类有：`RecursiveTask`（可以返回任务计算的结果）或者 `RecursiveAction`；
+
+当 ForkJoinTask 子类准备就绪后，创建一个表示所有要完成工作的对象，并将它传递给 `ForkJoinPool` 的 `invoke()` 方法。
+
+> Blurring for Clarity
+
+为了了解 fork/join 框架是如何工作的，参考下面的例子。假设你想要使一张图片变得模糊。用一个整型数组表示原始图片，数组中的每一个值表示一个像素的颜色，那么输出的图片也可以用相同大小的整型数组表示。
+
+为了实现模糊图片目的，我们需要单独处理图片的每一个像素。每个像素与其周围像素的平均值(红色、绿色和蓝色组件的平均值)，并将结果放置在目标数组中。由于图像是一个大数组，这个过程可能需要很长时间。通过使用 fork/join 框架实现算法，您可以利用多处理器系统上的并发处理。下面是一个可能的实现：
+
+```java
+public class ForkBlur extends RecursiveAction {
+    
+    private int[] mSource;
+    private int mStart;
+    private int mLength;
+    private int[] mDestination;
+    
+    // 处理窗口的大小, 应该是奇数
+    private int mBlurWidth = 15;
+    
+    // 切分的阈值
+    protected static int sThreshold = 100000;
+
+    public ForkBlur(int[] src, int start, int length, int[] dst) {
+        this.mSource = src;
+        this.mStart = start;
+        this.mLength = length;
+        this.mDestination = dst;
+    }
+
+    protected void computeDirectly() {
+        int sizePixels = (this.mBlurWidth - 1) / 2;
+        for (int index = this.mStart; index < this.mStart + this.mLength; index++) {
+            // 计算平均值
+            float rt = 0, gt = 0, bt = 0;
+            for (int mi = -sizePixels; mi <= sizePixels; mi++) {
+                int mindex = Math.min(Math.max(mi + index, 0), this.mSource.length - 1);
+                int pixel = this.mSource[mindex];
+                rt += (float) ((pixel & 0x00ff0000) >> 16) / this.mBlurWidth;
+                gt += (float) ((pixel & 0x0000ff00) >> 8) / this.mBlurWidth;
+                bt += (float) ((pixel & 0x000000ff) >> 0) / this.mBlurWidth;
+            }
+            // 设置目标图片的像素
+            int dpixel = (0xff000000) | (((int) rt) << 16) | (((int) gt) << 8) | (((int) bt) << 0);
+            this.mDestination[index] = dpixel;
+        }
+    }
+    
+    @Override
+    protected void compute() {
+        if (this.mLength < sThreshold) {
+            this.computeDirectly();
+            return;
+        }
+        
+        int split = this.mLength / 2;
+        
+        invokeAll(new ForkBlur(this.mSource, this.mStart, split, this.mDestination),
+                new ForkBlur(this.mSource, this.mStart + split, this.mLength - split, this.mDestination));
+    }
+}
+```
+
+这里我们创建了一个代表所有要执行任务的 RecursiveAction 对象，实现了 compute() 方法，它要么直接执行模糊，要么把它分成两个更小的任务，一个简单的数组长度阈值有助于确定是执行工作还是分割工作。
+
+下面就可以使用 fork/join 框架来处理这个任务了，只需要以下步骤：
+
+（1）创建一个 task 表示所有要完成的工作：
+
+```java
+// source image pixels are in src
+// destination image pixels are in dst
+ForkBlur fb = new ForkBlur(src, 0, src.length, dst);
+```
+
+（2）创建一个 ForkJoinPool 对象用于执行 task：
+
+```java
+ForkJoinPool pool = new ForkJoinPool();
+```
+
+（3）运行任务：
+
+```java
+pool.invoke(fb);
+```
+
+> 标准实现
+
+除了使用 fork/join 框架来实现在多处理器系统上并发执行任务的自定义算法(例如前一节中的ForkBlur.java示例)，Java SE 中还有一些通常有用的特性已经使用 fork/join 框架实现了。
+
+- 其中一个实现是在 Java SE 8 中的 `java.util.Arrays` 的 `parallelSort()` 方法。这些方法和 `sort()` 类似，但是通过 fork/join 框架来利用并发性。当在多处理器系统上运行时，大型数组的并行排序比顺序排序更快。
+- 另一个使用 fork/join 框架的是在 `java.util.streams` 包中的一些方法。这是 Java 8 Lambda 的一部分。参考：https://docs.oracle.com/javase/tutorial/java/javaOO/lambdaexpressions.html
+
+### Concurrent Collections
+
+
+
 
 
 
 
 进度：
 
-- https://docs.oracle.com/javase/tutorial/essential/concurrency/newlocks.html
+- https://docs.oracle.com/javase/tutorial/essential/concurrency/collections.html
 
