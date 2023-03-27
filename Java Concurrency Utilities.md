@@ -1,3 +1,20 @@
+---
+title: Java Concurrency Utilities Review
+author: NaiveKyo
+top: false
+hide: false
+img: 'https://cdn.jsdelivr.net/gh/NaiveKyo/CDN/img/20220425111412.jpg'
+coverImg: /img/20220425111412.jpg
+cover: false
+toc: true
+mathjax: false
+date: 2023-03-27 22:10:03
+summary: "回顾 Java concurrency utilities 提供的多种并发工具"
+categories: "Java"
+keywords: "Java"
+tags: "Java"
+---
+
 # 前言
 
 Java concurrency utilities package 提供了强大的、可扩展的框架，主要用于高性能的多线程编程工具，比如线程池和阻塞队列。
@@ -1299,13 +1316,106 @@ pool.invoke(fb);
 
 ### Concurrent Collections
 
+`java.util.concurrent` 包下面有一些为 Java collection framework 补充的集合类。可以根据提供的集合接口分为以下几类：
+
+- `BlockingQueue`：定义了一种 FIFO 的数据结构，如果试图向一个满的队列添加元素或者从空的队列检索元素时，就会阻塞或超时；
+- `ConcurrentMap`：该接口继承了 `java.util.Map` 接口，并为其提供了一些有用的原子操作。当 Map 中指定的 key 存在时才会移除或者覆盖掉对应的 key-value pair；或者只有当指定 key 不存在时才会添加进入。ConcurrentMap 保证了这些操作的原子性，从而避免了进行额外的同步保证。ConcurrentMap 的标准实现是 `ConcurrentHashMap`，它是 HashMap 的并发安全的版本；
+- `ConcurrentNavigableMap`：该接口继承了 ConcurrentMap 接口并支持 `approximate matches`（近似匹配）。它的标准实现是 `ConcurrentSkipListMap` 同时也是 TreeMap 的并发实现版本；
+
+上述这些集合都可以通过定义好 happens-before 规则来避免内存一致性错误。
+
+### Atomic Variables
+
+`java.util.concurrent.atomic` 包定义了一些类用来支持单个变量的原子操作。所有的类都有 get 和 set 方法，等价于对 volatile 变量的读写操作。这是因为在同一个变量上的 set 操作 happens-before 后续的 get 操作。
+
+为了演示这些包是如何工作的，我们通过一个 Counter 类来演示：
+
+会发生 thread interference 的 Counter：
+
+```java
+public class Counter {
+    
+    private int c = 0;
+    
+    public void increment() {
+        c++;
+    }
+    
+    public void decrement() {
+        c--;
+    }
+    
+    public int value() {
+        return c;
+    }
+}
+```
+
+同步保证的 SynchronizedCounter：
+
+```java
+public class SynchronizedCounter {
+    private int c = 0;
+    
+    public synchronized void increment() {
+        c++;
+    }
+    
+    public synchronized void decrement() {
+        c--;
+    }
+    
+    public synchronized int value() {
+        return c;
+    }
+}
+```
+
+原子保证的 AtomicCounter：
+
+```java
+public class AtomicCounter {
+    private AtomicInteger c = new AtomicInteger(0);
+    
+    public void increment() {
+        c.incrementAndGet();
+    }
+    
+    public void decrement() {
+        c.decrementAndGet();
+    }
+    
+    public int value() {
+        return c.get();
+    }
+}
+```
+
+### Concurrent Random Numbers
+
+JDK 7 版本 `java.util.concurrent` 提供了一个非常方便的类：`ThreadLocalRandom`，应用程序可以使用它在多线程或者 ForkJoinTask 中生成随机数。
+
+在并发访问的时候，使用 ThreadLocalRandom 要比 Math.random() 更好，因为它可以减少线程争用，提高性能。
+
+使用它很简单，比如下面这样：
+
+```java
+int r = ThreadLocalRandom.current().nextInt(4, 77);
+```
+
+
+
+# For Further Reading
+
+- *Concurrent Programming in Java: Design Principles and Pattern (2nd Edition)* by Doug Lea. A comprehensive work by a leading expert, who's also the architect of the Java platform's concurrency framework.
+- *Java Concurrency in Practice* by Brian Goetz, Tim Peierls, Joshua Bloch, Joseph Bowbeer, David Holmes, and Doug Lea. A practical guide designed to be accessible to the novice.
+- *Effective Java Programming Language Guide (2nd Edition)* by Joshua Bloch. Though this is a general programming guide, its chapter on threads contains essential "best practices" for concurrent programming.
+- *Concurrency: State Models & Java Programs (2nd Edition)*, by Jeff Magee and Jeff Kramer. An introduction to concurrent programming through a combination of modeling and practical examples.
+- *[Java Concurrent Animated](http://sourceforge.net/projects/javaconcurrenta/):* Animations that show usage of concurrency features.
 
 
 
 
 
 
-进度：
-
-- https://docs.oracle.com/javase/tutorial/essential/concurrency/collections.html
 
