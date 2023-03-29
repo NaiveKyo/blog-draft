@@ -73,7 +73,100 @@ java.sql 主要包含以下 API：
 
 这个包为 Java 程序访问和处理 server side data source 提供了一些 API。javax.sql 包从 Java 1.4 发行版本开始作为 java.sql 包的补充，包含在 Java SE 和 Java EE 中。
 
+javax.sql 包提供了以下补充：
 
+- `DataSource` 接口作为 DriverManager 的可选方案，可以创建和 data source 的 connection；
+- Connection pooling and Statement pooling，连接池和语句池；
+- Distributed transactions，分布式事务；
+- Rowsets，结果集；
+
+应用程序可以直接使用 DataSource 和 RowSet API，但是 connection pooling 和 distributed transaction API 在内部中间层使用。
+
+> 使用 DataSource 对象来建立 Connection
+
+javax.sql 包提供了一种更好的建立和数据源之间的 connection 的方式。之前通过 DriverManager 类的机制限制仍然有效。只不过更推荐使用 DataSource 来创建 connection，因为这种方式提供了一些增强特性。
+
+下面列出用 DataSource 的好处：
+
+- 可以对数据源的属性进行更改，这意味着当数据源或驱动程序的某些内容发生更改时，不需要对应用程序代码进行更改；
+- 连接池、语句池以及分布式事务可以通过 DataSource 对象和程序使用的某些中间层一起使用。之前通过 DriverManager 创建的 Connection 是不具备池化特性的，且不支持分布式事务；
+
+现在数据库供应商需要提供对应的 Driver 且包含 DataSource 的实现。一个特定的 DataSource 实现代表一种物理数据库，由它创建的 Connection 连接的也是一个物理数据源。
+
+对于一个数据源来讲，通过 Java 的 JNDI（Java Naming and Directory Interface）API 注册逻辑名称，应用程序可以通过查找已注册的逻辑名称来检索所需的 DataSource 对象，然后应用程序就可以通过这个 DataSource 对象去创建和物理数据源之间的 connection。
+
+DataSource 对象可以实现为与中间层基础结构一起工作，这样它创建的 connections 将被池化以供重用。使用这种 DataSource 实现的应用程序可以通过池子中的 connection 对象来操作数据库。还可以实现 DataSource 对象以使用中间层基础结构，这样它产生的连接就可以用于分布式事务，而无需任何特殊编码。
+
+> Connection Pooling and Statement Pooling
+
+如果 DataSource 的实现支持池化技术，使用它就可以提高程序的性能，因为创建新的 Connection 对象代价是昂贵的，而复用已有的连接对象则更加高效。
+
+同时 Connection pooling 对于应用程序而言是透明的，程序不会感知到连接池的状态，因为它们和中间层一起工作，程序不需要通过代码操作它，只需要调用 `DataSource.getConnection` 方法就可以获取池子中的连接对象，然后就可以通过 Connection 对象和数据库交互。
+
+connection pooling 使用的类和接口如下所示：
+
+- `ConnectionPoolDataSource` 接口；
+- `PooledConnection` 接口；
+- `ConnectionEvent` 类；
+- `ConnectionEventListener` 接口；
+- `StatementEvent` 类；
+- `StatementEventListener` 接口；
+
+连接池管理器是三层体系结构的中间层工具，它在幕后使用这些类和接口。当 `ConnectionPoolDataSource` 对象创建 `PooledConnection` 对象时，连接池管理器将会为这个 `PooledConnection` 对象注册一个 `ConnectionEventListener`。当该连接对象 closed 或者出现 error，连接池管理者（作为一个监听者）将会受到通知获取一个 `ConnectionEvent` 对象。
+
+> Distributed Transactions
+
+和 pooled connections 一样，通过与中间层一起工作的 DataSource 创建的 connections 可以参于到分布式事务中。它允许应用程序可以在多个服务器上执行一个事务。
+
+分布式事务使用的接口和类有：
+
+- `XADataSource` 接口；
+- `XAConnection` 接口；
+
+由事务管理器（transaction manager）使用这些接口，应用程序无法直接使用它们。
+
+`XAConnection` 继承了 `PooledConnection`，因此分布式事务的 connection 也支持池化技术。中间层中的事务管理器透明地处理所有事情。应用程序代码中唯一的变化是应用程序不能做任何会干扰事务管理器处理事务的事情。具体来说，应用程序不能调用 `Connection.commit` 或 `Connection.rollback`，也不能连接设置为自动提交模式（也就是说，它不能调用 `connection . setautocommit (true)`）。
+
+`XADataSource` 创建 `XAConnection`，`XAConnection` 又可以创建 `XAResource` 对象，事务管理器可以通过 `XAResource` 对象来管理 connection。
+
+注：Java 的分布式事务 API 概念还不够完善，具体实现要看第三方分布式事务框架。
+
+> Rowsets
+
+`RowSet` 接口和其他类或接口一起使用，主要可以分为以下三类：
+
+（1）Event Notification（事件通知）
+
+- `RowSetListener`：
+  - RowSet 对象也属于 Java Bean 机制的一部分，因为它符合 Java Bean 的定义，且参于 JavaBeans 的事件通知机制（event notification mechanism），也提供的有 `RowSetListener`，可以通过调用 `RowSet.addRowSetLinstener` 方法来绑定；
+  - 当 RowSet 对象发生变化的时候（rows 中某一个发生变化、或者所有 row 都发生变化、或者移除了某个 cursor），就会通知所有注册的监听者；
+- `RowSetEvent`
+  - 它作为内部通知处理机制的一部分，RowSet 对象创建 RowSetEvent 实例传给它的监听者，监听者可以通过 RowSetEvent 对象来获取具体发生的事件。
+
+（2）Metadata
+
+- `RowSetMetadata` 此接口继承了 `ResultSetMetaData`，包含和 RowSet 对象关联的信息，应用程序可以通过该元数据对象获取 rowset 包含了多少列，每一列包含的数据；
+
+（3）The Reader/Writer Facility
+
+如果一个 RowSet 对象实现了 `RowSetInternal` 接口，那么它就可以调用和它关联的 `RowSetReader` 对象来操作数据，也可以调用关联的 `RowSetWriter` 对象将 rows 的变化回写给数据源。保持与数据源连接的 RowSet 不需要使用读取器和写入器，因为它可以直接对数据源进行操作。
+
+- `RowSetInternal`
+
+实现了该接口的 RowSet 对象可以访问它的内部的状态，且可以调用对应的 reader 和 writer；
+
+- `RowSetReader`
+
+A disconnected `RowSet` object that has implemented the `RowSetInternal` interface can call on its reader (the `RowSetReader` object associated with it) to populate it with data. When an application calls the `RowSet.execute` method, that method calls on the rowset's reader to do much of the work. Implementations can vary widely, but generally a reader makes a connection to the data source, reads data from the data source and populates the rowset with it, and closes the connection. A reader may also update the `RowSetMetaData` object for its rowset. The rowset's internal state is also updated, either by the reader or directly by the method `RowSet.execute`.
+
+- `RowSetWriter`
+
+A disconnected `RowSet` object that has implemented the `RowSetInternal` interface can call on its writer (the `RowSetWriter` object associated with it) to write changes back to the underlying data source. Implementations may vary widely, but generally, a writer will do the following:
+
+- Make a connection to the data source
+- Check to see whether there is a conflict, that is, whether a value that has been changed in the rowset has also been changed in the data source
+- Write the new values to the data source if there is no conflict
+- Close the connection
 
 ## JDBC 4.2 API
 
@@ -96,3 +189,12 @@ JDBC 4.2 API 集成了以前版本的 JDBC API 版本：
 - The JDBC 1.0 API
 
 需要注意的是：有很多新特性是可选的，因此开发者选择的数据库驱动可能有一些改动，在使用特定的驱动版本的时候，最好查询驱动的文档看看它是否支持某些新特性。
+
+# Getting Started
+
+
+
+
+
+https://docs.oracle.com/javase/tutorial/jdbc/basics/index.html
+
