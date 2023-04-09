@@ -170,7 +170,7 @@ A disconnected `RowSet` object that has implemented the `RowSetInternal` interfa
 
 ## JDBC 4.2 API
 
-Java SE 的 JDBC 是分版本的，JDK 8 中 JDBC 的版本是 4.2，相关 API 在两个包中：
+Java SE 的 JDBC 是有版本的，JDK 8 中 JDBC 的版本是 4.2，相关 API 在两个包中：
 
 - `java.sql` 包中提供了JDBC 的 core API；
 - `javax.sql` 包提供 JDBC 的 Optional API；
@@ -191,6 +191,266 @@ JDBC 4.2 API 集成了以前版本的 JDBC API 版本：
 需要注意的是：有很多新特性是可选的，因此开发者选择的数据库驱动可能有一些改动，在使用特定的驱动版本的时候，最好查询驱动的文档看看它是否支持某些新特性。
 
 # Getting Started
+
+学习环境如下：
+
+- 基于 Docker 创建 MySQL 容器；
+- MySQL 版本为 8 +；
+- Java 项目构建工具为 Maven；
+- JDK 8 +；
+
+Docker image：`mysql:8.0.32-oracle`
+
+Maven 依赖：
+
+```xml
+<dependency>
+    <groupId>com.mysql</groupId>
+    <artifactId>mysql-connector-j</artifactId>
+    <version>8.0.32</version>
+</dependency>
+
+<dependency>
+    <groupId>org.junit.jupiter</groupId>
+    <artifactId>junit-jupiter-api</artifactId>
+    <version>5.9.2</version>
+    <scope>test</scope>
+</dependency>
+```
+
+
+
+# 使用 JDBC 处理 SQL 语句
+
+通常来说使用 JDBC 处理 SQL 语句只需要按照如下步骤：
+
+（1）创建 connection；
+
+（2）创建 statement；
+
+（3）利用 statement 执行 sql 语句；
+
+（4）处理 ResultSet 结果集对象；
+
+（5）关闭 connection；
+
+工具类：
+
+```java
+package io.naivekyo.util;
+
+import io.naivekyo.annotation.TableColumn;
+
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * @author NaiveKyo
+ * @version 1.0
+ * @since 2023/4/2 17:32
+ */
+public class JDBCUtils {
+    
+    private static final String USERNAME = "root";
+    
+    private static final String PASSWORD = "123456";
+    
+    private static final String URL = "jdbc:mysql://192.168.154.2:3306/my_test?useSSL=false&useUnicode=true&characterEncoding=UTF-8&serverTimeZone=Asia/Shanghai";
+    
+    private static Connection getConnection() throws SQLException {
+        return DriverManager.getConnection(URL, USERNAME, PASSWORD);
+    }
+
+    /**
+     * <p>执行插入语句</p>
+     * @param sql   预处理的 sql 语句
+     * @param params    要填充的数据
+     * @return 受影响的行数
+     */
+    public static int insert(String sql, Object... params) {
+        if (params == null || params.length == 0)
+            throw new IllegalArgumentException("insert sql must have at least one parameter.");
+        Connection connection = null;
+        PreparedStatement statement = null;
+        try {
+            connection = getConnection();
+            statement = connection.prepareStatement(sql);
+            pretreatmentSQL(statement, params);
+            return statement.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        } finally {
+            releaseResource(connection, statement, null);
+        }
+        
+        return -1;
+    }
+
+    /**
+     * <p>sql 语句根据条件查询一条数据</p>
+     * @param sql   sql 查询语句
+     * @param clz   实体类的 Class 对象
+     * @param params    填充的查询数据
+     * @param <T>   数据库实体
+     * @return  实体类对象
+     */
+    public static <T> T getOne(String sql, Class<T> clz, Object... params) {
+        if (params == null || params.length == 0)
+            throw new IllegalArgumentException("condition query sql must have at least one parameter.");
+        Connection connection = null;
+        PreparedStatement statement = null;
+        ResultSet rs = null;
+        T t = null;
+        try {
+            connection = getConnection();
+            statement = connection.prepareStatement(sql);
+            pretreatmentSQL(statement, params);
+            rs = statement.executeQuery();
+            while (rs.next()) {
+                t = useReflectGetEntity(rs, clz);
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            releaseResource(connection, statement, rs);
+        }
+
+        return t;
+    }
+
+    private static void pretreatmentSQL(PreparedStatement statement, Object[] params) throws SQLException {
+        for (int i = 0; i < params.length; i++) {
+            statement.setObject(i + 1, params[i]);
+        }
+    }
+
+    private static <T> T useReflectGetEntity(ResultSet rs, Class<T> clz) throws Exception {
+        Field[] fields = clz.getDeclaredFields();
+        Constructor<T> constructor = clz.getConstructor();
+        constructor.setAccessible(true);
+        T obj = constructor.newInstance();
+        
+        for (Field f : fields) {
+            TableColumn anno = f.getAnnotation(TableColumn.class);
+            if (anno != null) {
+                f.setAccessible(true);
+                String columnName = anno.value();
+                Object property = rs.getObject(columnName);
+                f.set(obj, property);
+            }
+        }
+        
+        return obj;
+    }
+
+    /**
+     * <p>执行查询 sql 获取数据库实体集合</p>
+     * @param sql   sql 查询语句
+     * @param clz   Java 实体类 Class 对象
+     * @param params    查询参数
+     * @param <T>   Java 实体类
+     * @return  实体类对象集合
+     */
+    public static <T> List<T> getEntityList(String sql, Class<T> clz, Object... params) {
+        if (params == null || params.length == 0)
+            throw new IllegalArgumentException("condition query sql must have at least one parameter.");
+        Connection connection = null;
+        PreparedStatement statement = null;
+        ResultSet rs = null;
+        List<T> list = null;
+        try {
+            connection = getConnection();
+            statement = connection.prepareStatement(sql);
+            pretreatmentSQL(statement, params);
+            rs = statement.executeQuery();
+            list = new ArrayList<>();
+            while (rs.next()) {
+                list.add(useReflectGetEntity(rs, clz));
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            releaseResource(connection, statement, rs);
+        }
+        
+        return list;
+    }
+    
+    public static int update(String sql, Object... params) {
+        if (!sql.contains("where"))
+            throw new IllegalArgumentException("illegal update sql statement. sql must contain 'where' clause!");
+        if (params == null || params.length == 0)
+            throw new IllegalArgumentException("condition update sql must have at least one parameter.");
+        Connection connection = null;
+        PreparedStatement statement = null;
+        try {
+            connection = getConnection();
+            statement = connection.prepareStatement(sql);
+            pretreatmentSQL(statement, params);
+            return statement.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        } finally {
+            releaseResource(connection, statement, null);
+        }
+        
+        return -1;
+    }
+
+    private static void releaseResource(Connection connection, Statement statement, ResultSet resultSet) {
+        try {
+            if (connection != null)
+                connection.close();
+            if (statement != null)
+                statement.close();
+            if (resultSet != null)
+                resultSet.close();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+}
+```
+
+字段映射注解：
+
+```jav
+/**
+ * <p>数据库实体与 Java 实体类的字段名称映射</p>
+ * <p>标注在对象属性上用于声明当前属性对应的数据库实体字段</p>
+ * @author NaiveKyo
+ * @version 1.0
+ * @since 2023/4/9 21:49
+ */
+@Documented
+@Retention(RetentionPolicy.RUNTIME)
+@Target(ElementType.FIELD)
+public @interface TableColumn {
+    
+    String value();
+    
+}
+```
+
+
+
+
+
+
+
+
 
 
 
