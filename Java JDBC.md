@@ -446,11 +446,146 @@ public @interface TableColumn {
 
 
 
+## 建立 connection
 
+首先你需要和要使用的 data source 建立一个 connection。通常来说一个应用要和数据源建立连接会使用下面两个类中的一个：
 
+- `DriverManager`：这个类可以在应用程序与数据源之间建立 connection，数据源由 database URL 指定。当使用它建立 Connection 时，它会自动在类路径下寻找任何 JDBC 4.0 驱动。而对于 JDBC 4.0 之前的驱动则需要手动加载；
+- `DataSource`：这个接口要比 DriverManager 类更好一些，它将底层数据的详细信息和应用程序分开，不同的 DataSource 对象拥有不同的属性集。
 
+使用 DriverManager 时，有一些注意点：
 
+- database connection URL 是一个字符串，DBMS JDBC driver 用它和数据库建立 connection，通常 URL 包含了特定数据库采取的协议、数据库的地址、要连接的目标数据库、连接的属性。详细的信息由对应的数据库供应商提供。
 
+使用 DataSource 的例子后面的文章在 spring 项目中使用，DataSource 是 JDBC API 的补充，要比使用 DriverManager 更好一些，因为它支持使用连接池和分布式事务。
+
+# 处理 SQLExceptions
+
+当使用 JDBC 和数据源交互的时候，如果发生了错误，就会抛出 `SQLException` 该类继承自 Exception，SQLException 实例中封装了一些信息有助于判断到底是什么原因导致的错误。
+
+- 使用 `SQLException.getMessage` 方法获取导致错误的原因的描述字符串；
+- `SQLState` 字段封装了数据库状态 code，这些 code 大部分由 ISO/ANSI 和 Open Group（X/Open）组织维护，也有一些由专门的数据库供应商提供，比如 MySQL 官方文档列出了这些 [MySQL Error Numbers](https://dev.mysql.com/doc/connector-j/8.0/en/connector-j-reference-error-sqlstates.html)；
+- `vendorCode` 错误码，是一个整型数字标识了造成 SQLException 的原因，它的值和含义是和特定数据库实现相关，可能是底层数据源返回的实际错误代码。要追溯异常链，可以调用 `SQLException.getCause` 方法直到获得 null 值；
+- 一个对 `chained exceptions` 的引用，如果发生了多个 error，就会形成 SQL 异常链，通过调用 `SQLException.getNextException` 获取其他异常信息。
+
+## Retrieving Exceptions
+
+下面的例子方法输出 SQLState、error code、error exception 以及可能存在的异常链：
+
+```java
+public static void printSQLException(SQLException ex) {
+
+    for (Throwable e : ex) {
+        if (e instanceof SQLException) {
+            if (ignoreSQLException(
+                ((SQLException)e).
+                getSQLState()) == false) {
+
+                e.printStackTrace(System.err);
+                System.err.println("SQLState: " +
+                    ((SQLException)e).getSQLState());
+
+                System.err.println("Error Code: " +
+                    ((SQLException)e).getErrorCode());
+
+                System.err.println("Message: " + e.getMessage());
+
+                Throwable t = ex.getCause();
+                while(t != null) {
+                    System.out.println("Cause: " + t);
+                    t = t.getCause();
+                }
+            }
+        }
+    }
+}
+```
+
+## Retrieving Warnings
+
+`SQLWarning` 继承了 SQLException，它主要用于处理数据库的 access warnings。Warnings 并不会像异常一样终止程序的执行，它只是简单的警告用户某些事情发生了。例如，警告可能会让您知道您试图撤销的特权没有被撤销，或者一个警告可能告诉您在请求断开连接期间发生了错误。
+
+`Connection`、`Statement`、`ResultSet` 都有一个 `getWarnings` 方法用于获取可能存在的警告信息。如果获得了 SQLWarning 对象，则可以继续调用它的 `getNextWarning` 获取可能存在的警告链。执行一条语句会自动清除前一条语句中的警告，这样它们就不会堆积起来。然而，这意味着，如果您想检索一条语句上报告的警告，则必须在执行另一条语句之前执行。
+
+下面的例子演示如何获取 Statement 和 ResultSet 对象的完整警告信息：
+
+```java
+public static void getWarningsFromResultSet(ResultSet rs)
+    throws SQLException {
+    JDBCTutorialUtilities.printWarnings(rs.getWarnings());
+}
+
+public static void getWarningsFromStatement(Statement stmt)
+    throws SQLException {
+    JDBCTutorialUtilities.printWarnings(stmt.getWarnings());
+}
+
+public static void printWarnings(SQLWarning warning)
+    throws SQLException {
+
+    if (warning != null) {
+        System.out.println("\n---Warning---\n");
+
+    while (warning != null) {
+        System.out.println("Message: " + warning.getMessage());
+        System.out.println("SQLState: " + warning.getSQLState());
+        System.out.print("Vendor error code: ");
+        System.out.println(warning.getErrorCode());
+        System.out.println("");
+        warning = warning.getNextWarning();
+    }
+}
+```
+
+最常见的警告是 `DataTruncation` 警告，它继承了 SQLWarning，所有的 DataTruncation 对象都有一个 SQLState 01004，表明在读取或者写入数据时出现了问题。调用它的方法可以找到是哪个字段或者哪个参数的数据被截断了。无论截断是在读操作还是写操作上，应该传输多少字节，以及实际传输了多少字节。
+
+## SQLException 的分类
+
+您的 JDBC 驱动程序可能抛出一个 SQLException 的子类，它对应于一个公共的 SQLState 或一个与特定的 SQLState 类值不关联的公共错误状态。这使您能够编写更多可移植的错误处理代码。这些异常是以下类之一的子类:
+
+- `SQLNonTransientException`；
+- `SQLTransientException`；
+- `SQLRecoverableException`
+
+可以查阅最新版的 java.sql 包的文档说明或者应用使用的 JDBC 驱动的 api 文档。
+
+其他 SQLException 的子类：
+
+下面两种：
+
+- `BatchUpdateException`：在批量更新操作过程中发生错误会抛出该异常。
+- `SQLClientInfoException`：当一个 Connection的某些 client 属性没有被正确设置时会抛出这个异常。
+
+# ResultSet
+
+`ResultSet` 接口提供了一些方法用于检索和操作通过查询语句获得的结果。同时 ResultSet 对象也有一些不同的功能和特征，这些特征字段包括：type、concurrency 以及 cursor holdability（保持游标的能力）；
+
+## type
+
+ResultSet 的 type 决定了它的两方面的功能级别：是否可以操作游标，以及 ResultSet 对象如何反映底层数据源的并发更改。
+
+ResultSet 对象的灵敏度由三种不同的 ResultSet type 之一决定：
+
+- `TYPE_FORWARD_ONLY`：顾名思义，result set 不能滚动，游标只能向前移动，从第一行移动到最后一行。结果集中包含的行取决于底层数据库生成结果的方式。也就是说，它包含在执行查询时或在检索行时满足查询的行。
+- `TYPE_SCROLL_INSENSITIVE`：这种 result set 可以滚动，游标可以从当前位置向前或向后移动，并且它还可以移动到某个绝对位置，结果集对打开时对底层数据源所做的更改不敏感。它包含在执行查询时或在检索行时满足查询的行。
+- `TYPE_SCROLL_SENSITIVE`：这种 result set 可以滚动，游标可以相对于当前位置向前或向后移动，也可以移动到某个绝对位置，结果集反映对底层数据源所做的更改，而结果集保持打开状态。
+
+默认的 ResultSet type 是 `TYPE_FORWARD_ONLY`；
+
+注意：并不是所有的数据库和 JDBC 启动都支持这些 type，使用 `DatabaseMetaData.supportsResultSetType` 方法可以查看结果集是否支持特定的 type。（返回 true 或 false）。
+
+## concurrency
+
+ResultSet 对象的 concurrency 决定了它对 update functionality 的支持程度。
+
+有两个 concurrency level：
+
+- `CONCUR_READ_ONLY`：ResultSet 不能被相关方法更新；
+- `CONCUR_UPDATEABLE`：ResultSet 对象可以被相关方法更新；
+
+默认的 ResultSet concurrency 是 `CONCUR_READ_ONLY`；
+
+注意：并不是所有数据库和 JDBC Driver 都支持这两个级别，可以使用 `DatabaseMetaData.supportsResultSetConcurrency` 判断是否支持
 
 
 
