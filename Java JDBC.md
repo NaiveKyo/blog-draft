@@ -587,9 +587,61 @@ ResultSet 对象的 concurrency 决定了它对 update functionality 的支持�
 
 注意：并不是所有数据库和 JDBC Driver 都支持这两个级别，可以使用 `DatabaseMetaData.supportsResultSetConcurrency` 判断是否支持
 
+## Cursor Holdability
+
+在当前事务中调用 `Connection.commit` 可以关闭在事务中创建的 ResultSet 对象，但是有些情况却不会像我们期望的那样。应用程序可以设置ResultSet 的 `holdability` 属性来决定是否在调用 commit 方法的时候关闭 ResultSet 的 cursor；
+
+以下 ResultSet 常量可以提供给 Connection 的方法 createStatement、 prepareStatement 和 prepareCall：
+
+- `HOLD_CURSORS_OVER_COMMIT`：ResultSet 的 cursor 不会被关闭，它们是 holdable 的：当调用 commit 方法提交事务后，cursor 仍然是打开的状态，如果应用程序中很多场景都是使用只读的 ResultSet 对象，可以考虑使用它；
+- `CLOSE_CURSORS_AT_COMMIT`：当 commit 方法被调用时，ResultSet 的 cursor 就会关闭，这样做可以提升程序的性能；
+
+注意：并不是所有的数据库和 JDBC Driver 实现都支持 holdable 和 non-holdable 的 cursor。
+
+下面的例子演示 ResultSet 默认的 cursor holdability，以及是否支持前面说的两种常量：
+
+```java
+public static void cursorHoldabilitySupport(Connection conn)
+    throws SQLException {
+
+    DatabaseMetaData dbMetaData = conn.getMetaData();
+    System.out.println("ResultSet.HOLD_CURSORS_OVER_COMMIT = " +
+        ResultSet.HOLD_CURSORS_OVER_COMMIT);
+
+    System.out.println("ResultSet.CLOSE_CURSORS_AT_COMMIT = " +
+        ResultSet.CLOSE_CURSORS_AT_COMMIT);
+
+    System.out.println("Default cursor holdability: " +
+        dbMetaData.getResultSetHoldability());
+
+    System.out.println("Supports HOLD_CURSORS_OVER_COMMIT? " +
+        dbMetaData.supportsResultSetHoldability(
+            ResultSet.HOLD_CURSORS_OVER_COMMIT));
+
+    System.out.println("Supports CLOSE_CURSORS_AT_COMMIT? " +
+        dbMetaData.supportsResultSetHoldability(
+            ResultSet.CLOSE_CURSORS_AT_COMMIT));
+}
+```
+
+## Cursor
+
+正如前面所说的，可以通过一个 cursor 访问 ResultSet 中的数据，它指向 ResultSet 对象中的某一个 row。但是要注意的是当 ResultSet 刚创建的时候，cursor 是指向第一行的前一行的，所以我们要通过这样的循环方式：
+
+```java
+ResultSet rs = ...
+while (rs.next()) {
+   .....
+}
+```
+
+当然还有其他 cursor 方法可以根据需要移动 cursor；
+
+注意默认的 sensitivity 是 TYPE_FORWARD_ONLY，就是只能向前移动直到最后一行。
 
 
 
 
-https://docs.oracle.com/javase/tutorial/jdbc/basics/index.html
+
+https://docs.oracle.com/javase/tutorial/jdbc/basics/retrieving.html
 
