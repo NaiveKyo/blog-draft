@@ -645,3 +645,264 @@ while (rs.next()) {
 
 https://docs.oracle.com/javase/tutorial/jdbc/basics/retrieving.html
 
+## 通过 ResultSet 修改数据库数据
+
+`ResultSet.TYPE_SCROLL_SENSITIVE` 可以允许 cursor 向前或向后移动，或者移动到相对当前 position 的某个位置，而 `ResultSet.CONCUR_UPDATABLE` 则允许更新 ResultSet 中某个 row，并通过调用方法来更新该 row 对应的数据库中的记录，参考下面的例子：
+
+```java
+public void modifyPrices(float percentage) throws SQLException {
+    try (Statement stmt =
+         con.createStatement(ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_UPDATABLE)) {
+        ResultSet uprs = stmt.executeQuery("SELECT * FROM COFFEES");
+        while (uprs.next()) {
+            float f = uprs.getFloat("PRICE");
+            uprs.updateFloat("PRICE", f * percentage);
+            uprs.updateRow();
+        }
+    } catch (SQLException e) {
+        JDBCTutorialUtilities.printSQLException(e);
+    }
+}
+```
+
+这里的 `uprs.updateRow()` 操作就是更新数据库；
+
+## 使用 Statement 对象进行 Batch Updates
+
+`Statement`、`PreparedStatement` 以及 `CallableStatement` 都有一个和它们关联的命令列表，这个列表包括更新、插入或者删除的语句，同时也包括 DDL 语句，如 create table、drop table 等等。但是这些语句并不能创建 ResultSet 对象。换句话说，这些命令执行的结果是数据库受影响的行数，是一个用于计数的值。
+
+比如下面的例子，一次更新四条记录：
+
+```java
+public void batchUpdate() throws SQLException {
+    con.setAutoCommit(false);
+    try (Statement stmt = con.createStatement()) {
+
+        stmt.addBatch("INSERT INTO COFFEES " +
+                      "VALUES('Amaretto', 49, 9.99, 0, 0)");
+        stmt.addBatch("INSERT INTO COFFEES " +
+                      "VALUES('Hazelnut', 49, 9.99, 0, 0)");
+        stmt.addBatch("INSERT INTO COFFEES " +
+                      "VALUES('Amaretto_decaf', 49, 10.99, 0, 0)");
+        stmt.addBatch("INSERT INTO COFFEES " +
+                      "VALUES('Hazelnut_decaf', 49, 10.99, 0, 0)");
+
+        int[] updateCounts = stmt.executeBatch();
+        con.commit();
+    } catch (BatchUpdateException b) {
+        JDBCTutorialUtilities.printBatchUpdateException(b);
+    } catch (SQLException ex) {
+        JDBCTutorialUtilities.printSQLException(ex);
+    } finally {
+        con.setAutoCommit(true);
+    }
+}
+```
+
+为了利用事务的特性，方法开头设置了 `con.setAutoCommit(false)`，禁用了当前 Connection 对象的自动提交模式，这样开发者就可以手动控制事务的提交与回滚。
+
+`Statement.addBatch` 方法用于向和当前 Statement 对象关联的 command list 中添加 command，最后调用 `stmt.executeBatch()` 将这四条语句发送给数据库并作为一次批量操作。
+
+最后的 `con.commit()` 则提交本次事务，四条语句对数据库的影响变为永久性的。
+
+事务处理完后，记得将当前 Connection 的提交模式改为自动提交：`con.setAutoCommit(true)`
+
+## Parameterized Batch Update
+
+上面介绍了普通的 Statement 的批量模式，下面看看 PreparedStatement 是如何做的：
+
+```java
+con.setAutoCommit(false);
+PreparedStatement pstmt = con.prepareStatement(
+                              "INSERT INTO COFFEES VALUES( " +
+                              "?, ?, ?, ?, ?)");
+pstmt.setString(1, "Amaretto");
+pstmt.setInt(2, 49);
+pstmt.setFloat(3, 9.99);
+pstmt.setInt(4, 0);
+pstmt.setInt(5, 0);
+pstmt.addBatch();
+
+pstmt.setString(1, "Hazelnut");
+pstmt.setInt(2, 49);
+pstmt.setFloat(3, 9.99);
+pstmt.setInt(4, 0);
+pstmt.setInt(5, 0);
+pstmt.addBatch();
+
+// ... and so on for each new
+// type of coffee
+
+int[] updateCounts = pstmt.executeBatch();
+con.commit();
+con.setAutoCommit(true);
+```
+
+
+
+# 使用 Transactions
+
+有时候你可能向在其他某些语句执行后再执行某一条语句。确保两个操作都发生或者两个操作都不发生的方法是使用事务。事务是作为一个单元执行的一个或多个语句的集合，因此要么执行所有语句，要么不执行任何语句。
+
+## Disabling Auto-Commit Mode
+
+当一个 Connectino 对象被创建时，默认开启 `auto-commit mode`，这意味着每一条单独的 Statement 将会作为一条 transaction 来执行，并且在执行成功后自动提交事务。（更准确的来说，当 SQL Statement completed 的时候提交而不是 executed 的时候。completed 的时候：当 result sets 或者 update counts 被检索的时候。然而，在几乎所有情况下，语句都是在执行之后立即完成并提交的。）
+
+但是可以通过禁用 auto-commit 模式来允许多个语句组合为一个 transaction 来。比如下面的例子，注意 con 是一个激活的 connection：
+
+`con.setAutoCommit(false);`
+
+## Committing Transactions
+
+在禁用 auto-commit 模式后，除非调用 commit 方法否则不会有语句被提交。在上一次调用 commit 方法后执行的所有语句都包含在当前事务中，并作为一个单元一起提交。
+
+参考下面的例子：
+
+```java
+public void updateCoffeeSales(HashMap<String, Integer> salesForWeek) throws SQLException {
+    String updateString =
+        "update COFFEES set SALES = ? where COF_NAME = ?";
+    String updateStatement =
+        "update COFFEES set TOTAL = TOTAL + ? where COF_NAME = ?";
+
+    try (PreparedStatement updateSales = con.prepareStatement(updateString);
+         PreparedStatement updateTotal = con.prepareStatement(updateStatement))
+
+    {
+        con.setAutoCommit(false);
+        for (Map.Entry<String, Integer> e : salesForWeek.entrySet()) {
+            updateSales.setInt(1, e.getValue().intValue());
+            updateSales.setString(2, e.getKey());
+            updateSales.executeUpdate();
+
+            updateTotal.setInt(1, e.getValue().intValue());
+            updateTotal.setString(2, e.getKey());
+            updateTotal.executeUpdate();
+            con.commit();
+        }
+    } catch (SQLException e) {
+        JDBCTutorialUtilities.printSQLException(e);
+        if (con != null) {
+            try {
+                System.err.print("Transaction is being rolled back");
+                con.rollback();
+            } catch (SQLException excep) {
+                JDBCTutorialUtilities.printSQLException(excep);
+            }
+        }
+    }
+}
+```
+
+注意顺序，先禁用 auto-commit，然后执行完语句后，在 commit，事务完成后，在开启 auto-commit，这样当前 connection 又可以继续被其他语句所使用。
+
+## Using Transactions to Preserve Data Integrity
+
+除了将语句分组在一起以作为一个单元执行之外，事务还有助于保持表中数据的完整性。
+
+通过两个方法：
+
+- `commit`：提交事务，对数据库的影响持久化；
+- `rollbakc`：回退到所有更改生效之前；
+
+可以通过使用事务来避免数据不一致的情况，事务提供某种程度的保护，防止两个用户同时访问数据时产生冲突。
+
+在一次事务中为了避免冲突，DBMS 会使用 lock 阻止其他人访问事务正在访问的数据的机制（需要注意的是在 auto-commit 模式下，每个 statement 都是作为一条事务执行，此时锁只会被一个 statement 所持有）。在设置好锁之后，在事务提交或回滚之前，它一直有效。例如，DBMS 可以锁定表中的一行，直到提交更新为止。该锁的作用是防止用户进行脏读，也就是说，在将值变为永久值之前读取该值。
+
+锁的设置方式取决于当前事务的 isolation level，它从多个层次提供对事务的不同支持程度，从不支持事务到非常严格的支持事务。
+
+Connectino 接口中包含了五个常量对应了可以在 JDBC 中使用了五种事务隔离级别
+
+| Isolation Level                | Transactions  | Dirty Reads      | Non-Repeatable Reads | Phantom Reads    |
+| ------------------------------ | ------------- | ---------------- | -------------------- | ---------------- |
+| `TRANSACTION_NONE`             | Not supported | *Not applicable* | *Not applicable*     | *Not applicable* |
+| `TRANSACTION_READ_COMMITTED`   | Supported     | Prevented        | Allowed              | Allowed          |
+| `TRANSACTION_READ_UNCOMMITTED` | Supported     | Allowed          | Allowed              | Allowed          |
+| `TRANSACTION_REPEATABLE_READ`  | Supported     | Prevented        | Prevented            | Allowed          |
+| `TRANSACTION_SERIALIZABLE`     | Supported     | Prevented        | Prevented            | Prevented        |
+
+解释一下这个几个问题：
+
+- `Dirty Reads`（脏读）：一条事务中读取到了另一条事务还没有提交的数据；
+- `Non-Repeatable Reads`（不可重复读）：当事务 A 读取了某一行，事务 B 随后更新了这一行数据，然后事务 A 又读取了这一行，结果就是在事务 A 中两次检索到同一行的数据前后不一致；
+- `Phantom Reads`（幻读）：当事务 A 检索到一组满足给定条件的行时，事务 B 随后就插入或者更新了一些数据，而且这部分数据也可以成功匹配事务 A 的检索条件，然后事务 A 又以这个条件来检索数据，此时，事务 A 会发现多出来一部分数据，这些 row 就被视为 phantom（幻象）；
+
+通常来说开发者不必关心事务隔离级别，这却决于使用的 DBMS，比如 MySQL 默认的隔离级别就是可重复读，能够解决脏读和不可重复读的问题。
+
+使用 `DatabaseMetaData.supportsTransactionIsolationLevel` 方法来查看当前 Driver 是否支持指定的事务隔离级别。
+
+
+
+## Setting and Rolling Back to Savepoints
+
+`Connection.setSavepoint` 可以在当前 transaction 中设置 `Savepoint` 对象。`Connection.rollback()` 方法的重载方法可以接收 savepoint 参数；
+
+参考下面的例子：
+
+```java
+public void modifyPricesByPercentage(
+    String coffeeName,
+    float priceModifier,
+    float maximumPrice) throws SQLException {
+    con.setAutoCommit(false);
+    ResultSet rs = null;
+    String priceQuery = "SELECT COF_NAME, PRICE FROM COFFEES " +
+        "WHERE COF_NAME = ?";
+    String updateQuery = "UPDATE COFFEES SET PRICE = ? " +
+        "WHERE COF_NAME = ?";
+    try (PreparedStatement getPrice = con.prepareStatement(priceQuery, ResultSet.TYPE_SCROLL_INSENSITIVE, ResultSet.CONCUR_READ_ONLY);
+         PreparedStatement updatePrice = con.prepareStatement(updateQuery))
+    {
+        Savepoint save1 = con.setSavepoint();
+        getPrice.setString(1, coffeeName);
+        if (!getPrice.execute()) {
+            System.out.println("Could not find entry for coffee named " + coffeeName);
+        } else {
+            rs = getPrice.getResultSet();
+            rs.first();
+            float oldPrice = rs.getFloat("PRICE");
+            float newPrice = oldPrice + (oldPrice * priceModifier);
+            System.out.printf("Old price of %s is $%.2f%n", coffeeName, oldPrice);
+            System.out.printf("New price of %s is $%.2f%n", coffeeName, newPrice);
+            System.out.println("Performing update...");
+            updatePrice.setFloat(1, newPrice);
+            updatePrice.setString(2, coffeeName);
+            updatePrice.executeUpdate();
+            System.out.println("\nCOFFEES table after update:");
+            CoffeesTable.viewTable(con);
+            if (newPrice > maximumPrice) {
+                System.out.printf("The new price, $%.2f, is greater " +
+                                  "than the maximum price, $%.2f. " +
+                                  "Rolling back the transaction...%n",
+                                  newPrice, maximumPrice);
+                con.rollback(save1);
+                System.out.println("\nCOFFEES table after rollback:");
+                CoffeesTable.viewTable(con);
+            }
+            con.commit();
+        }
+    } catch (SQLException e) {
+        JDBCTutorialUtilities.printSQLException(e);
+    } finally {
+        con.setAutoCommit(true);
+    }
+}
+```
+
+
+
+## Releasing Savepoints
+
+`Connection.releaseSavepoint` 方法接收一个 SavePoint 参数并将其从当前事务移除。
+
+当特定的 savepoint 被移除后，如果继续通过 rollback 方法回退到该 savepoint，就会导致 SQLException。在事务中创建的任何 savepoint 都将自动释放，并在事务提交或整个事务回滚时失效。将事务回滚到某个 savepoint 后将自动释放并使在相关 savepoint 之后创建的任何其他 savepoint 无效。
+
+
+
+## When to Call Method rollback
+
+如前所述，调用 rollback 方法将终止事务并返回被修改为先前值的任何值，如果您试图在事务中执行一个或多个语句却导致了 SQLException，请调用方法rollback 以结束事务并重新启动事务。
+
+
+
+进度：https://docs.oracle.com/javase/tutorial/jdbc/basics/rowset.html
