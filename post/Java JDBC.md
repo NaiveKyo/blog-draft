@@ -1,3 +1,20 @@
+---
+title: Java JBDC API Review
+author: NaiveKyo
+top: false
+hide: false
+img: 'https://cdn.jsdelivr.net/gh/NaiveKyo/CDN/img/20220425111445.jpg'
+coverImg: /img/20220425111445.jpg
+cover: false
+toc: true
+mathjax: false
+date: 2023-04-22 20:57:35
+summary: "阅读 Java 8 官方文档中关于 JDBC 的部分"
+categories: "Java"
+keywords: ["Java", "JDBC"]
+tags: ["Java", "JDBC"]
+---
+
 # 参考
 
 [Java API doc](https://docs.oracle.com/javase/8/docs/api/)
@@ -905,4 +922,320 @@ public void modifyPricesByPercentage(
 
 
 
-进度：https://docs.oracle.com/javase/tutorial/jdbc/basics/rowset.html
+# Using RowSet Objects
+
+JDBC 的 RowSet 对象和 ResultSet 对象相比能够以一种更加灵活、简便的方式存储表格数据；
+
+Oracle 根据使用场景定义了五种通用的 RowSet 接口并提供了标准引用。这些版本的 RowSet 接口及其实现为程序员提供了很多便利。开发者也可以根据需要扩展 `javax.sql.RowSet` 接口，也可以继承前面提到的五种 RowSet 实现，也可以重写它们。然而，许多程序员可能会发现标准参考实现已经满足了他们的需求，并将按原样使用它们。
+
+本小节介绍 RowSet 接口以及以下接口：
+
+- `JdbcRowSet` 接口；
+- `CachedRowSet` 接口；
+- `WebRowSet` 接口；
+- `JoinRowSet` 接口；
+- `FilteredRowSet` 接口；
+
+涵盖以下主题：
+
+- RowSet Objects 可以做什么；
+- RowSet Objects 的种类；
+
+## What Can RowSet Objects Do?
+
+所有的 RowSet 对象都继承自 ResultSet 接口因此也具有它的各种功能，为什么 RowSet 更加特殊呢？因为它增加了以下新特性：
+
+- [Function as JavaBeans Component](https://docs.oracle.com/javase/tutorial/jdbc/basics/rowset.html#javabeans)
+- [Add Scrollability or Updatability](https://docs.oracle.com/javase/tutorial/jdbc/basics/rowset.html#scrollability)
+
+## Function as JavaBeans Component
+
+所有的 RowSet 都属于 JavaBeans 组件，这意味着它们有以下特性：
+
+- 属性（Properties）；
+- JavaBean Notification Mechanism；
+
+关于 JavaBean 可以参考：https://docs.oracle.com/javase/tutorial/javabeans/
+
+RowSet 既然可以使用 JavaBean 特性，那么一个 RowSet 对象可以有自身的属性，同时可以使用 JavaBean 的事件模型，这就意味着当某些事件发生时，就会通知到所有已经注册的组件。对于所有的 RowSet 对象而言，有三种事件触发通知机制：
+
+- A cursor movement：游标移动事件；
+- The update, insertion, or deletion of a row；某一行被更新、插入或者删除；
+- A change to the entire RowSet content；整个 RowSet 发生了变化；
+
+## Add Scrollability or Updatability
+
+DBMS 对 Result Set 的 scroll 或 update 特性支持程度不同，但是 RowSet 对象默认就是 scrollable 和 updatable 的。
+
+
+
+## Kinds of RowSet Objects
+
+可以将 RowSet 对象分为两类：`connected` 或者 `disconnected`；
+
+- `connected` RowSet 对象使用 JDBC driver  构建和底层数据库的 connection，在整个生命周期内都会保持连接；
+- `disconnected` RowSet 对象则只有在需要从 ResultSet 对象中读取或回写数据到数据源时才会建立 connection。在读/写数据之后就不再维持这个 connection。
+
+> Connected RowSet Objects
+
+RowSet 接口的标准实现中只有一个是 connected RowSet Object： `JdbcRowSet`
+
+JbdcRowSet 对象在其生命周期内会一直维持和数据源的连接，同时它也和 ResultSet 非常相似，可以看作是 ResultSet 的一个包装器，也就可以支持 scrollable 和 updatable 的 ResultSet 对象。
+
+同时也可以将其当作 JavaBeans 组件。
+
+> Disconnected RowSet Objects
+
+RowSet 接口其他四种标准实现都是 disconnected 的。它们具有 connected RowSet 的所有功能，同时追加了断开 connection 的能力。注意 disconnected RowSet 对象相比 connected RowSet 对象要轻量一些，因为它们不用一直维护和数据源的 connection。disconnected RowSet 对象也是可以被序列化的，可串行化和轻量级的结合使得它们非常适合通过网络发送数据。
+
+其中 `CachedRowSet` 定义了所有 disconnected RowSet 对象的基础功能，其他三个接口在此基础上进行扩展，它们提供了更专业的功能，下面展示它们相关的信息：
+
+（1）CachedRowSet
+
+CachedRowSet 对象具备 JdbcRowSet 的所有功能，同时提供了以下特殊功能：
+
+- 获取和数据源的 connection 并可以执行 query；
+- 从 ResultSet 对象中读取数据，然后用该数据填充自身；
+- 在数据断开连接时操作数据并对其进行更改；
+- 重新连接数据源以将更改写回该数据源；
+- 检查与数据源的冲突并解决这些冲突；
+
+（2）WebRowSet
+
+WebRowSet 拥有所有 CachedRowSet 的功能，同时添加了以下增强特性：
+
+- 将数据写入到 XML 文档中；
+- 从 XML 文档中读取信息构造 WebRowSet 对象；
+
+（3）JoinRowSet
+
+JoinRowSet 对象拥有所有 WebRowSet 的功能，同时添加了以下增强特性：
+
+- 无需连接到数据源即可形成相当于 SQL JOIN 的语句；
+
+（4）FilteredRowSet
+
+FilteredRowSet 对象同样拥有 WebRowSet 的所有功能（CachedRowSet），并且提供了以下增强特性：
+
+- 可以对数据按照特定规则过滤，只展示被选中的数据，这相当于在 RowSet 对象上执行查询，而不必使用查询语言或连接到数据源。
+
+# 参考
+
+https://docs.oracle.com/javase/tutorial/jdbc/basics/cachedrowset.html
+
+
+
+# Procedure
+
+https://docs.oracle.com/javase/tutorial/jdbc/basics/storedprocedures.html
+
+
+
+
+
+# 补充：事件模型
+
+RowSet 可以看作 JavaBean，Java 的 JavaBean 模块提出了一种事件模型：
+
+- `java.util.EventListener`
+- `java.util.EventObject`
+
+下面是一次尝试使用事件模型的案例，考虑这样的场景，某个上下文具备状态，包括初始状态、正在初始化、初始化完成、准备就绪，这几类状态，同时提供对应的事件监听者：
+
+接口：
+
+```java
+public interface MyEventListener {
+
+    /**
+     * 判断能否处理特定的事件
+     * @param event
+     * @return
+     */
+    boolean support(MyEventObject event);
+
+    /**
+     * 处理特定的事件
+     * @param event
+     */
+    void handleEvent(MyEventObject event);
+    
+}
+```
+
+事件对象模型：
+
+```java
+public class MyEventObject {
+    
+    private Object source;
+
+    public MyEventObject(Object source) {
+        if (source == null)
+            throw new IllegalArgumentException("event source must not be null.");
+        this.source = source;
+    }
+    
+    public static MyEventObject of(Object source) {
+        if (source == null)
+            throw new IllegalArgumentException("event source must not be null.");
+        return new MyEventObject(source);
+    }
+
+    public Object getSource() {
+        return source;
+    }
+
+    public void setSource(Object source) {
+        this.source = source;
+    }
+
+    @Override
+    public String toString() {
+        return String.format("Event source: %s", this.source);
+    }
+
+}
+```
+
+上下文模型：
+
+```java
+public class MyContextEntity {
+
+    /**
+     * 初始状态
+     */
+    public static final int INITIAL_STATE = 0;
+
+    /**
+     * 正在初始化
+     */
+    public static final int INITIALIZING_STATE = 1;
+
+    /**
+     * 初始化完毕
+     */
+    public static final int INITIALIZED_STATE = 2;
+
+    /**
+     * 准备就绪
+     */
+    public static final int READY_STATE = 3;
+
+    /**
+     * 上下文状态, 默认是初始状态
+     */
+    private volatile int state = INITIAL_STATE;
+
+    /**
+     * 当前上下文注册的所有监听者
+     */
+    private List<MyEventListener> eventListeners = new ArrayList<>();
+
+    public MyContextEntity() {
+    }
+    
+    public void start() {
+        this.state = INITIALIZING_STATE;
+        this.publishEvent(MyEventObject.of(this.state));
+
+        this.state = INITIALIZED_STATE;
+        this.publishEvent(MyEventObject.of(this.state));
+
+        this.state = READY_STATE;
+        this.publishEvent(MyEventObject.of(this.state));
+    }
+    
+    /**
+     * 注入监听者对象, 每个监听者针对特定的状态
+     * @param eventListener
+     */
+    public void registerEventListener(MyEventListener eventListener) {
+        if (eventListener == null)
+            throw new IllegalArgumentException("event listener must not be null.");
+        this.eventListeners.add(eventListener);
+    }
+
+    /**
+     * 将上下文中发生的事件发布给监听者
+     * @param event
+     */
+    private void publishEvent(MyEventObject event) {
+        this.eventListeners.forEach(listener -> {
+            if (listener.support(event)) {
+                listener.handleEvent(event);
+            }
+        });
+    }
+}
+```
+
+上下文状态监听者实现：
+
+```java
+public class ContextStateChangeListener implements MyEventListener {
+
+    /**
+     * 当前监听者关注的事件源
+     */
+    private Integer eventSource;
+
+    public ContextStateChangeListener(Integer eventSource) {
+        if (eventSource == null)
+            throw new IllegalArgumentException("The event source that the listener is listening for cannot be null");
+        this.eventSource = eventSource;
+    }
+    
+    public static MyEventListener of(Integer eventSource) {
+        return new ContextStateChangeListener(eventSource);
+    }
+
+    @Override
+    public boolean support(MyEventObject event) {
+        Object targetSource = event.getSource();
+        if (this.eventSource == targetSource)
+            return true;
+        return this.eventSource.equals(targetSource);
+    }
+
+    @Override
+    public void handleEvent(MyEventObject event) {
+        System.out.printf("ContextStateChangeListener accept and handle event: [%s]%n", event);
+    }
+    
+}
+```
+
+
+
+测试工具：
+
+```java
+public static void main(String[] args) {
+    // 测试
+    // 准备所有的 listener
+    MyEventListener contextInitializingListener = ContextStateChangeListener.of(INITIALIZING_STATE);
+    MyEventListener contextInitializedListener = ContextStateChangeListener.of(INITIALIZED_STATE);
+    MyEventListener contextReadListener = ContextStateChangeListener.of(READY_STATE);
+
+    // 准备上下文
+    MyContextEntity context = new MyContextEntity();
+    // 注册监听者
+    context.registerEventListener(contextInitializingListener);
+    context.registerEventListener(contextInitializedListener);
+    context.registerEventListener(contextReadListener);
+
+    // 启动上下文
+    context.start();
+}
+```
+
+控制台输出：
+
+```
+ContextStateChangeListener accept and handle event: [Event source: 1]
+ContextStateChangeListener accept and handle event: [Event source: 2]
+ContextStateChangeListener accept and handle event: [Event source: 3]
+```
+
