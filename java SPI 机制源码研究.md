@@ -34,4 +34,14 @@ provider 类通常是一个 proxy，它包含足够的信息来决定提供者�
 
 如果一个特定的 service provider class 的 binary name 存在多个 configuration 文件中，或者在一个 configuration 文件中出现了多次，重复的名字会被忽略。
 
-Providers 的 located 和 instantiated 是 lazily 的，是按需加载和实例化的。服务加载程序维护到目前为止已加载的提供程序的缓存
+Providers 的 located 和 instantiated 是 lazily 的，是按需加载和实例化的。service loader 程序维护了一个缓存用来存储到目前为止已经加载的 providers。每一次调用 `java.util.ServiceLoader#iterator`  方法就会返回一个迭代器对象，这个迭代器中包含了 provider cache 中的所有元素，且按照实例化的顺序。然后，它就会惰性加载并实例化任何剩余的 providers 同时按照顺序将它们添加到缓存中。
+
+如果想要清空 provider cache，只需要调用 `java.util.ServiceLoader#reload` 方法即可，它会清空 cache，如果此时再次调用 iterator 方法，就会立即惰性加载和实例化可以找到的 provider，reload 方法的使用场景就是在 Java Runtime 环境中，如果添加了其他的 provider 到类路径下，此时需要将其加载进内存，只需要调用 reload 方法，然后如果再次触发了 iterator 方法的调用就能够将我们新提供的 provider 加载进缓存中。
+
+注意由于涉及到类加载，所以 service loader 程序的执行上下文一定是在 security context 中。
+
+由于 ServiceLoader 不是线程安全的，所以不推荐在多线程环境下使用。
+
+除非特别声明，否则在调用 ServiceLoader 类的方法时传递 null 参数，一般都会报空指针异常。
+
+Usage Note：如果用于加载服务的 classloader 所处的类路径下包含网络 URL，那么在搜索 provider-configuration file 时 URL 会被忽略。
