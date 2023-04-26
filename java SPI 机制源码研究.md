@@ -38,10 +38,155 @@ Providers 的 located 和 instantiated 是 lazily 的，是按需加载和实例
 
 如果想要清空 provider cache，只需要调用 `java.util.ServiceLoader#reload` 方法即可，它会清空 cache，如果此时再次调用 iterator 方法，就会立即惰性加载和实例化可以找到的 provider，reload 方法的使用场景就是在 Java Runtime 环境中，如果添加了其他的 provider 到类路径下，此时需要将其加载进内存，只需要调用 reload 方法，然后如果再次触发了 iterator 方法的调用就能够将我们新提供的 provider 加载进缓存中。
 
-注意由于涉及到类加载，所以 service loader 程序的执行上下文一定是在 security context 中。
+注意由于涉及到类加载，所以 service loader 程序的执行上下文一定是在 security context 中。且受信任的系统代码应该在 privileged security context 中调用此类中的方法；
 
 由于 ServiceLoader 不是线程安全的，所以不推荐在多线程环境下使用。
 
 除非特别声明，否则在调用 ServiceLoader 类的方法时传递 null 参数，一般都会报空指针异常。
 
 Usage Note：如果用于加载服务的 classloader 所处的类路径下包含网络 URL，那么在搜索 provider-configuration file 时 URL 会被忽略。
+
+## 测试用例及源码分析
+
+看如下测试用例代码：
+
+service interface：
+
+```java
+public interface MyServiceType {
+    void greeting();
+}
+```
+
+service provider 1：
+
+```java
+public class MyServiceProvider implements MyServiceType {
+    
+    static {
+        // do something...
+        System.out.println("MyServiceProvider has been instantiated.");
+    }
+    
+    @Override
+    public void greeting() {
+        System.out.println("hello, i'm customize service provider.");
+    }
+}
+```
+
+service provider 2：
+
+```java
+public class MyServiceProvider2 implements MyServiceType {
+
+    static {
+        // do something...
+        System.out.println("MyServiceProvider2 has been instantiated.");
+    }
+    
+    @Override
+    public void greeting() {
+        System.out.println("hello, i'm customize service type provider 2.");
+    }
+}
+```
+
+`/META-INF/services/io.naivekyo.spi.type.MyServiceType`
+
+```
+io.naivekyo.spi.provider.MyServiceProvider
+io.naivekyo.spi.provider.MyServiceProvider2
+```
+
+test code：
+
+（这里演示的 provider 比较简单，只提供了简单的 static 代码块和具体实现方法，现实中的场景是一个 service provider 类是一系列类的主入口，我们希望在类的实例化的时候做很多操作，所以下面的测试代码仅仅是在 security context 中加载类并进行类的实例化，并没有将具体的对象收集起来，关于类的实例化，参见 [Section 12.4 of The Java Language Specification.](https://docs.oracle.com/javase/specs/jls/se8/html/jls-12.html)）
+
+```java
+@Test
+void test() {
+    // 从两个地方获取 service provider 的特定实现类 binary name
+    // (1) System property 'my.service.impl'
+    // (2) 使用 ServiceLoader mechanism
+    String systemProperty = null;
+    try {
+        systemProperty = AccessController.doPrivileged(new PrivilegedAction<String>() {
+            @Override
+            public String run() {
+                return System.getProperty("my.service.impl");
+            }
+        });
+    } catch (Exception e) {
+        systemProperty = null;
+    }
+
+    if (systemProperty != null && !"".equals(systemProperty)) {
+        String[] split = systemProperty.split(",");
+        for (String s : split) {
+            try {
+                Class.forName(s, true, ClassLoader.getSystemClassLoader());
+            } catch (ClassNotFoundException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    AccessController.doPrivileged(new PrivilegedAction<Void>() {
+        @Override
+        public Void run() {
+            ServiceLoader<MyServiceType> loadedProviders = ServiceLoader.load(MyServiceType.class);
+            Iterator<MyServiceType> providersIterator = loadedProviders.iterator();
+            try {
+                while (providersIterator.hasNext()) {
+                    providersIterator.next();
+                }
+            } catch (Exception e) {
+                // Do nothing
+            }
+            return null;
+        }
+    });
+}
+```
+
+控制台输出：
+
+```
+MyServiceProvider has been instantiated.
+MyServiceProvider2 has been instantiated.
+```
+
+使用 ServiceLoader 的核心代码是：
+
+```java
+Iterator<MyServiceType> providersIterator = loadedProviders.iterator();
+try {
+    while (providersIterator.hasNext()) {
+        providersIterator.next();
+    }
+} catch (Exception e) {
+    // Do nothing
+}
+```
+
+debug 一下会发现核心点在于 `java.util.ServiceLoader.LazyIterator`，而不是 `java.util.ServiceLoader#providers`，对于 service provider 是惰性加载的，调用了 `load` 方法只是创建了一些对象，正在有用的是调用 `hasNext` 和 `next` 方法，这两个方法主要是通过 Java 的资源服务读取 `/META-INF/services/io.naivekyo.spi.type.MyServiceType` 文件，按行读取其中的服务实现类的 binary name，做相关处理后最终执行类加载：
+
+```java
+// java.util.ServiceLoader.LazyIterator#nextService
+c = Class.forName(cn, false, loader);
+
+// 实例化并缓存起来
+S p = service.cast(c.newInstance());
+providers.put(cn, p);
+```
+
+注意上面我们的两种方式，如果是根据系统属性实例化的对应这行代码：
+
+```java
+Class.forName(s, true, ClassLoader.getSystemClassLoader());
+```
+
+根据实际需要做不同处理；
+
+更多信息参考 `ServiceLoader` 源码；
