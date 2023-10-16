@@ -18,7 +18,7 @@
 
 WebSocket 协议通过 HTTP upgrade 技术可以将一个 HTTP 连接升级为 WebSocket 长连接。一旦进行了升级，客户端和服务端就可以彼此独立的向对方传输数据（全双工双向通信），且不需要请求头和 cookie，这就大大降低了网络传输所需的带宽。通常来讲 WebSocket 会用来周期性的传输一些体积较小的信息（比如几个字节的数据）。
 
-### JSR 356
+### JSR 356 Java API for WebSocket
 
 RFC 6455 提出了标准化的 WebSocket 协议，而在 Java 中 JSR 356 则定义了 WebSocket 的 Java API 规范，如果开发者想要在应用程序中集成 WebSocket （不管是在 Java 客户端还是在服务端），只需要实现对应的 api 就可以了。
 
@@ -85,6 +85,8 @@ new URI("ws://localhost:8080/tictactoeserver/endpoint"));
 - 一个 `EndpointConfig` 实例，它包含了关于 endpoint configuration 的信息；
 - 剩下的可变参数就是标注了 `@PathParam` 注解的参数了，指向 endpoint path 中包含的 path parameters。
 
+> @OnOpen
+
 下面的代码演示了当 WebSocket "opened" 时建立的 session 的标识符。
 
 ```java
@@ -102,6 +104,8 @@ public class MyEndpoint {
 只要 WebSocket 没有 closed，那么建立的 Session 实例就是有效的。Session 实例中包含了很多有趣的方法，开发者可以通过调用这些方法来获取关于 connection 的更多信息。此外 Session 中还包含了一个和 application-specific data 的 hook，就是 `getUserProperties()` 方法，它返回一个 `Map<String, Object>` ，通过这个 hook 开发者就可以向其中填充特定的数据，比如和 session 或者 application-specific 相关的数据，这样就可以在 WebSocket lifecycle 对应的多个 method 之间共享同一份数据。
 
 （<font style='color:green'>Tips：注意使用 getUserProperties hook 来保存 session 相关的或者 application-specific 的数据，可以在 lifecycle method 之间共享数据。</font>）
+
+> @OnMessage
 
 当一个 WebSocket endpoint 收到 messages 时，标注了 `@OnMessage` 的方法就会被调用，这个方法可以包含一下参数：
 
@@ -145,6 +149,8 @@ other.sendText ("Hello, world");
 ```
 
 在这种方式中，我们借助了 Session 实例，注意 WebSocket Lifecycle Method 方法都可以轻易的获取到它。而 `getBasicRemote()` 方法则可以返回 WebSocket 两个连接者中的另一个。`RemoteEndpoint` 实例可以用来发送文本消息，还有下文描述的其他类型的消息。
+
+> @OnClose
 
 当 WebSocket connection 即将要关闭时，标注了 `@OnClose` 注解的方法会被调用，这个方法可以包含如下参数：
 
@@ -190,6 +196,158 @@ public class MyEndpoint {
 }
 ```
 
+> @OnError
+
 除了前面展示的几个生命周期注解，还有一种就是当收到了一个 error 时会触发，可以通过 `@OnError` 注解标注特定的方法。
 
 #### Interface-Driven
+
+基于注解驱动时，我们只需要在特定的类或者方法上标注 WebScoket 相关的生命周期注解即可。而在基于接口的方式中，开发者需要继承 `javax.websocket.Endpoint` 抽象类并 override 其中的 onOpen、onClose 和 onError 方法。
+
+```java
+public class MyEndpoint extends Endpoint {
+
+    @Override
+    public void onClose(Session session, CloseReason closeReason) {
+        super.onClose(session, closeReason);
+    }
+
+    @Override
+    public void onError(Session session, Throwable throwable) {
+        super.onError(session, throwable);
+    }
+
+    @Override
+    public void onOpen(Session session, EndpointConfig config) {
+        // 需要注入一个 MessageHandler 来拦截消息
+        // 可以查看 Tomcat 或者 Spring-Websocket 框架对该接口的实现
+        session.addMessageHandler(new MessageHandler() {
+        });
+    }
+}
+```
+
+同时注意，为了能拦截消息，需要在 onOpen 方法实现中为当前 Session 注入一个 `javax.websocket.MessageHandler` 实现，可以参考 Tomcat 或者 Spring-Websocket 中的实现。
+
+查看 `MessageHandler` 接口源码，可以看到该接口内部还定义了两个接口 `javax.websocket.MessageHandler.Partial` 和 `javax.websocket.MessageHandler.Whole`，如果开发者需要 WebScoket 在收到部分消息时就得到通知，就需要实现 `Partial` 接口，反之，在收到完整的消息后通知就需要实现 `Whole` 接口。
+
+下面的代码片段展示了如何在收到完整的文本消息将其转化为大写模式并返回给另一个 peer：
+
+```java
+@Override
+public void onOpen(Session session, EndpointConfig config) {
+    // 需要注入一个 MessageHandler 来拦截消息
+    // 可以查看 Tomcat 或者 Spring-Websocket 框架对该接口的实现
+    final RemoteEndpoint.Basic remote = session.getBasicRemote();
+    session.addMessageHandler(new MessageHandler.Whole<String>() {
+        @Override
+        public void onMessage(String message) {
+            try {
+                remote.sendText(message.toUpperCase(Locale.ROOT));
+            } catch (IOException e) {
+                // handle send failure here
+            }
+        }
+    });
+}
+```
+
+#### Message Types, Encoders, and Decoders
+
+Java 提供的 WebSocket API 非常强大，因为它允许以 Java POJO 的形式收发 WebSocket 消息。
+
+Java API 默认提供三种基本消息类型：
+
+- Text-bases messages；文本类型
+- Binary messages；二级制消息；
+- Pong messages；这种消息和 WebSocket connection 本身有关。
+
+在 interface-driven 模式下，每个 session 对象都可以注入至少一个 `MessageHandler` 用于处理各种类型的消息。
+
+而使用 annotation-driven 模式时，我们在标注了 `@OnMessage` 注解的方法中，可以提供一个关于消息的参数，此时消息的类型就取决于开发者声明的消息类型。
+
+我们可以查看 Javadoc 中关于 `@OnMessage` 注解的描述，看看基于前面提到的三种基础类型的消息参数类型：
+
+- https://javaee.github.io/javaee-spec/
+- https://javaee.github.io/javaee-spec/javadocs/
+- https://javaee.github.io/javaee-spec/javadocs/javax/websocket/OnMessage.html
+
+- 如果方法要处理 text messages：
+  - `String` 参数表示接收 whole message；
+  - Java 的原始数据类型或者包装类也是接收 whole message；
+  - 一个 `String`  类型参数外加一个 `boolean` 基础类型，表示一部分一部分的接收消息；
+  - `Reader` 参数类型以 blocking stream 的形式接收 whole message；
+  - 如果这个 Endpoint 有一个 text decoder（`Decoder.Text` 或者 `Decoder.TextStream`）时，也可以声明其他的 object parameter；
+- 如果方法要处理 binary message：
+  - `byte[]` 或者 `ByteBuffer` 参数用于接收 whole message；
+  - `byte[]` 和一个 `boolean` 组合，或者 `ByteBuffer` 和一个 `boolean` 组合用于一部分一部分的接收消息；
+  - `InputStream` 以 blocking stream 的形式接收 whole message；
+  - 如果这个 Endpoint 有一个 binary decoder（`Decoder.Binary` 或者 `Decoder.BinaryStream`）时，也可以声明其他的 object parameter。
+- 如果方法要处理 pong message：
+  - `PongMessage` 类型参数用于处理 pong message。
+
+使用 encoder 我们可以将任何 Java object 转化为 text 或者 binary 消息，进而将 text-base 或者 binary message 传给另一个 peer，收到消息后也可以将消息 decoded 为 Java object， XML 或者 JSON 也可以作为消息格式也是一样的流程。
+
+开发者可以通过实现 `javax.websocket.Encoder` 接口来构造自己的 encoder，同样 decoder 需要实现 `javax.websocket.Decoder` 接口。此外，一个 endpoint 实例需要知道可用的 encoders 和 decoders，在 annotation-driven 模式下，我们可以为 `@ClientEndpoint` 或者 `@ServerEndpoint` 注解指定 encoder 和 decoder 集合。
+
+下面的例子展示了如何注册一个 `MessageEncoder`，它可以将 `MyJavaObject` 实例转化为 text message，而 `MessageDecoder` 的功能正好相反：
+
+```java
+@ServerEndpoint(value="/endpoint", encoders = MessageEncoder.class, decoders= MessageDecoder.class)
+public class MyEndpoint {
+...
+}
+
+class MessageEncoder implements Encoder.Text<MyJavaObject> {
+   @override
+   public String encode(MyJavaObject obj) throws EncodingException {
+      ...
+   }
+}
+
+class MessageDecoder implements Decoder.Text<MyJavaObject> {
+   @override 
+   public MyJavaObject decode (String src) throws DecodeException {
+      ...
+   }
+
+   @override 
+   public boolean willDecode (String src) {
+      // return true if we want to decode this String into a MyJavaObject instance
+   }
+}
+```
+
+注意，`Encoder` 接口中还定义了很多子接口：
+
+- `Encoder.Text`：将 Java objects 转化为 text messages；
+- `Encoder.TextStream`：将 Java objects 添加到 character stream 中；
+- `Encoder.Binary`：将 Java objects 转化为 binary messages；
+- `Encoder.BinaryStream`：将 Java objects 添加到 binary stream 中；
+
+类似的，`Decoder` 接口中也定义了四种子接口：
+
+- `Decoder.Text`：将 text message 转化为 Java object；
+- `Decoder.TextStream`：从 character stream 中读取 Java object；
+- `Decoder.Binary`：将 binary message 转化为 Java object；
+- `Decoder.BinaryStream`：从 binary stream 中读取 Java object；
+
+#### Conclusion
+
+Java 集成了 IETF WebSocket 规范，并提供 WebSocket 相关的 Java API，开发者可以通过实现这些 API 来构造自己的 WebSocket 实现。这样不管是 Web Clients 还是 Native Clients，只要同样实现了 WebSocket 规范，它们就可以很轻松的使用 WebSocket 协议同 Java 后端通信。
+
+同时 Java API 也很灵活，配置也很简单，Java 开发者可以选择自己喜欢的方式去使用它（基于注解，或者基于接口）。
+
+## Practice
+
+### Tomcat Server
+
+由于 WebSocket 的 server 桌面端实现不太好做，因此选取 SpringBoot 内嵌 Tomcat Servlet 容器来做 WebSocket 的服务端，新建一个 SpringBoot 项目即可。
+
+找到 Apache Tomcat 官方文档中关于 WebSocket 的部分，比如 springboot 2.7.15 版本内嵌的 tomcat 是 9.0.79，官方文档地址：
+
+- https://tomcat.apache.org/tomcat-9.0-doc/web-socket-howto.html
+
+可以看到 Tomcat 实现的是 JSR-356 提出的 WebSocket 1.1 API。
+
+进度：TODO
