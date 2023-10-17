@@ -350,4 +350,92 @@ Java 集成了 IETF WebSocket 规范，并提供 WebSocket 相关的 Java API，
 
 可以看到 Tomcat 实现的是 JSR-356 提出的 WebSocket 1.1 API。
 
-进度：TODO
+Tomcat 官方给出了一些例子，包括 client 端的和 server 端的，可以参考 Github 案例：
+
+- [Client side example](https://github.com/apache/tomcat/tree/9.0.x/webapps/examples/websocket)
+- [Server side example](https://github.com/apache/tomcat/tree/9.0.x/webapps/examples/WEB-INF/classes/websocket)
+
+Tomcat 提供了 WebSocket 规范提出了不少建议（和 Tomcat 自身有关的），随着时间的推移，这些规范也会被 WebScoket 采纳。
+
+#### Configuration
+
+Tomcat 的 WebSocket 实现采用了一些配置属性，比如下面这些：
+
+（1）`org.apache.tomcat.websocket.BLOCKING_SEND_TIMEOUT` 属性用于配置采用 blocking mode 的 WebSocket session 在发送消息时的写入超时时间，默认是 20000 毫秒（i.e. 20s），可以通过用户的配置文件去更改它；
+
+（2）除了使用 Java WebSocket API 的 `Session.setMaxIdleTimeout(long)` 方法外，Tomcat 还提供了更强大的控制由于 session 失活导致的超时问题。
+
+-  `org.apache.tomcat.websocket.READ_IDLE_TIMEOUT_MS` ：该属性决定了经过多少毫秒之后如果一直没有接收到 WebSocket message 就会触发 session timeout；（通常是 server 端等待接收 client 发送过来的消息）；
+
+- `org.apache.tomcat.websocket.WRITE_IDLE_TIMEOUT_MS`：该属性决定了经过多少毫秒之后如果一直没有发送 WebSocket message 就会触发 session timeout；（通常是 server 端发送给 client 消息）；
+
+这两个属性和 `Session.setMaxIdleTimeout(long)` 方法有这样的关系：如果没有使用该方法，就会应用上面两个 read/write 超时属性，而且这两个属性可以同时设置也可以只设置一个。
+
+（3）如果应用程序没有为 WebSocket 接收的 binary message 定义 `MessageHandler.Partial` 处理器实现，则一旦接收到 binary message，它们会先进入一个缓冲区（must be buffered），直到接收完整的 binary 消息后调用一次程序中注入的 `MessageHandler.Whole` 实现。
+
+针对 binary message，默认的 buffer size 是 8192 bytes（i.e. 8 MB）。web application 中可以通过设置 servlet context initialization parameter：`org.apache.tomcat.websocket.binaryBufferSize` 来改变缓冲区的大小。
+
+（4）同样的，如果应用程序没有为 WebSocket 接收的 text message 定义 `MessageHandler.Partial` 实现，那么接收到的消息也是先进入一个缓冲区，收到完整的消息后再传给 `MessageHandler.Whole` 实现。默认的缓冲区大小也是 8192 bytes。
+
+web application 中可以通过设置 servlet context initialization parameter：`org.apache.tomcat.websocket.textBufferSize` 来改变缓冲区大小。
+
+（5）Java WebSocket specification 1.0 中规定 the first endpoint 在完成 WebSocket handshake 后就不允许在进行任何编程式的 deployment 了。而默认情况下 Tomcat 则允许进行额外的编程式 deployment。可以通过 `org.apache.tomcat.websocket.noAddAfterHandshake` servlet content initialization parameter 去控制相关行为。如果不想这样，可以通过设置系统属性 `org.apache.tomcat.websocket.STRICT_SPEC_COMPLIANCE` 为 true 即可，但是此时如果显式的配置了 servlet context 参数，则这些参数的优先级会更高。
+
+（6）当 WebSocket client 同 server endpoint 建立 WebSocket 连接，且通过连接进行 I/O 操作，I/O connection 的超时机制由 `javax.websocket.ClientEndpointConfig` 提供的 `userProperties` 来控制。
+
+属性 `org.apache.tomcat.websocket.IO_TIMEOUT_MS` 可以控制 I/O 操作的超时时间，是一个字符串且以毫秒作为单位，默认是 5000（i.e. 5s）。
+
+（7）当 WebSocket client 想要连接一个具有安全机制的 secure server endpoint 时，`javax.websocket.ClientEndpointConfig` 提供的 `userProperties` 中可以配置 SSL，支持一下属性：
+
+- `org.apache.tomcat.websocket.SSL_CONTEXT`
+- `org.apache.tomcat.websocket.SSL_PROTOCOLS`
+- `org.apache.tomcat.websocket.SSL_TRUSTSTORE`
+- `org.apache.tomcat.websocket.SSL_TRUSTSTORE_PWD`
+
+默认的 TRUSTSTORE passpord 是 `changeit`；
+
+但是注意如果设置了 `org.apache.tomcat.websocket.SSL_CONTEXT` 属性，此时上面的 `org.apache.tomcat.websocket.SSL_TRUSTSTORE` 和 `org.apache.tomcat.websocket.SSL_TRUSTSTORE_PWD` 会失效。
+
+对于 secure server endpoint，默认会启用主机名校验（host name verification）
+
+
+
+TODO：
+
+For secure server end points, host name verification is enabled by default. To bypass this verification (not recommended), it is necessary to provide a custom `SSLContext` via the `org.apache.tomcat.websocket.SSL_CONTEXT` user property. The custom `SSLContext` must be configured with a custom `TrustManager` that extends `javax.net.ssl.X509ExtendedTrustManager`. The desired verification (or lack of verification) can then be controlled by appropriate implementations of the individual abstract methods.
+
+When using the WebSocket client to connect to server endpoints, the number of HTTP redirects that the client will follow is controlled by the `userProperties` of the provided `javax.websocket.ClientEndpointConfig`. The property is org.apache.tomcat.websocket.MAX_REDIRECTIONS. The default value is 20. Redirection support can be disabled by configuring a value of zero.
+
+When using the WebSocket client to connect to a server endpoint that requires BASIC or DIGEST authentication, the following user properties must be set:
+
+- `org.apache.tomcat.websocket.WS_AUTHENTICATION_USER_NAME`
+- `org.apache.tomcat.websocket.WS_AUTHENTICATION_PASSWORD`
+
+Optionally, the WebSocket client can be configured only to send credentials if the server authentication challenge includes a specific realm by defining that realm in the optional user property:
+
+- `org.apache.tomcat.websocket.WS_AUTHENTICATION_REALM`
+
+When using the WebSocket client to connect to a server endpoint via a forward proxy (also known as a gateway) that requires BASIC or DIGEST authentication, the following user properties must be set:
+
+- `org.apache.tomcat.websocket.WS_PROXY_AUTHENTICATION_USER_NAME`
+- `org.apache.tomcat.websocket.WS_PROXY_AUTHENTICATION_PASSWORD`
+
+Optionally, the WebSocket client can be configured only to send credentials if the server authentication challenge includes a specific realm by defining that realm in the optional user property:
+
+- `org.apache.tomcat.websocket.WS_PROXY_AUTHENTICATION_REALM`
+
+
+
+TODO：后续步骤
+
+- 编写 Tomcat + WebSocket 案例；
+- Spring MVC 对 WebSocket 的支持：https://docs.spring.io/spring-framework/docs/5.3.30/reference/html/web.html#websocket
+- SpringBoot 内嵌 Tomcat 且自动装配 WebSocket：
+  - https://spring.io/projects/spring-boot#learn
+  - https://docs.spring.io/spring-boot/docs/2.7.16/reference/html/
+  - https://docs.spring.io/spring-boot/docs/2.7.16/reference/html/messaging.html#messaging.websockets
+  - 参考配置类：
+  - org.springframework.boot.autoconfigure.web.servlet.ServletWebServerFactoryAutoConfiguration
+  - org.springframework.boot.autoconfigure.websocket.servlet.WebSocketServletAutoConfiguration
+  - org.springframework.boot.autoconfigure.websocket.servlet.WebSocketMessagingAutoConfiguration
+
