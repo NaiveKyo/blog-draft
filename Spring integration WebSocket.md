@@ -3,12 +3,12 @@
 ### Reference
 
 - [JSR 356 Java<sup>TM</sup> API for WebSocket](https://jcp.org/en/jsr/detail?id=356)
-
 - https://www.oracle.com/technical-resources/articles/java/jsr356.html
-
 - https://stackoverflow.com/questions/26452903/javax-websocket-client-simple-example
-
 - http://www.programmingforliving.com/2013/08/jsr-356-java-api-for-websocket-client-api.html
+- https://github.com/javaee （the legacy Java EE organization）
+- https://javaee.github.io/javaee-spec/ （这里可以看企业级 Java 开发相关的 api 和文档，比如 javax.websocket 下的类的 api 文档）
+- https://github.com/jakartaee （the current, active Enterprise Java development organization）
 
 对于大多数 web 拥有程序而言，基于 HTTP 的请求-响应模型有一定的局限性，信息只能通过一次次请求进行传递，无法持续的传输信息。
 
@@ -43,6 +43,8 @@ WebSocket 中常用的一些生命周期事件：
 
 #### Annotation-Driven
 
+##### Endpoint and Paramters
+
 Java 中将能够接收 WebSocket Request 的东西定义为 Endpoint，在 Annotation-Driven 模式下可以将 `@ServerEndpoint` 注解标注在某个 POJO 上，它就被声明为一个 Endpoint。该注解的 value 属性定义了 endpoint 的 path，参考如下代码：
 
 ```java
@@ -67,6 +69,8 @@ public class MyClientEndpoint {
 }
 ```
 
+##### @OnOpen
+
 在 Annotation-Driven 模式下如果想要在 POJO 中初始化一个 WebSocket connection，可以这样做：
 
 ```java
@@ -84,8 +88,6 @@ new URI("ws://localhost:8080/tictactoeserver/endpoint"));
 - 一个 `javax.websocket.Session` 参数，指向了被创建的 Session；
 - 一个 `EndpointConfig` 实例，它包含了关于 endpoint configuration 的信息；
 - 剩下的可变参数就是标注了 `@PathParam` 注解的参数了，指向 endpoint path 中包含的 path parameters。
-
-> @OnOpen
 
 下面的代码演示了当 WebSocket "opened" 时建立的 session 的标识符。
 
@@ -105,7 +107,7 @@ public class MyEndpoint {
 
 （<font style='color:green'>Tips：注意使用 getUserProperties hook 来保存 session 相关的或者 application-specific 的数据，可以在 lifecycle method 之间共享数据。</font>）
 
-> @OnMessage
+##### @OnMessage
 
 当一个 WebSocket endpoint 收到 messages 时，标注了 `@OnMessage` 的方法就会被调用，这个方法可以包含一下参数：
 
@@ -150,7 +152,7 @@ other.sendText ("Hello, world");
 
 在这种方式中，我们借助了 Session 实例，注意 WebSocket Lifecycle Method 方法都可以轻易的获取到它。而 `getBasicRemote()` 方法则可以返回 WebSocket 两个连接者中的另一个。`RemoteEndpoint` 实例可以用来发送文本消息，还有下文描述的其他类型的消息。
 
-> @OnClose
+##### @OnClose
 
 当 WebSocket connection 即将要关闭时，标注了 `@OnClose` 注解的方法会被调用，这个方法可以包含如下参数：
 
@@ -196,11 +198,22 @@ public class MyEndpoint {
 }
 ```
 
-> @OnError
+##### @OnError
 
 除了前面展示的几个生命周期注解，还有一种就是当收到了一个 error 时会触发，可以通过 `@OnError` 注解标注特定的方法。
 
+该注解标注的方法可以接收以下可选参数（更多信息参考 [@OnError API doc](https://javaee.github.io/javaee-spec/javadocs/)）：
+
+- 一个可选的 Session 参数；
+- 一个 Throwable 参数，可以是以下几种类型：
+  - connection problems：比如说在 socket 正常关闭前抛出的异常，一般被包装为 `javax.websocket.SessionException`；
+  - runtime errors：一般是开发者自定义的 message handlers 中抛出的；
+  - conversion errors：对 income messages 进行 encoding 时抛出的异常，如果正常编码才会调用 message handler。一般被包装为 `javax.websocket.DecodeException`；
+- 使用  @PathParam 注解标注的可变参数；
+
 #### Interface-Driven
+
+参考：[Endpoint api doc](https://javaee.github.io/javaee-spec/javadocs/javax/websocket/Endpoint.html#onError-javax.websocket.Session-java.lang.Throwable-)
 
 基于注解驱动时，我们只需要在特定的类或者方法上标注 WebScoket 相关的生命周期注解即可。而在基于接口的方式中，开发者需要继承 `javax.websocket.Endpoint` 抽象类并 override 其中的 onOpen、onClose 和 onError 方法。
 
@@ -357,9 +370,15 @@ Tomcat 官方给出了一些例子，包括 client 端的和 server 端的，可
 
 Tomcat 提供了 WebSocket 规范提出了不少建议（和 Tomcat 自身有关的），随着时间的推移，这些规范也会被 WebScoket 采纳。
 
-#### Configuration
+#### Configuration （Important）
 
-Tomcat 的 WebSocket 实现采用了一些配置属性，比如下面这些：
+<font style="color:red">注意：后文中提到的通过 user properties 来配置 Tomcat 定义的一些属性，这里是 user properties 是通过 `Map<String, Object> userProperties = session.getUserProperties()` 获取的一个 Map，将对应的属性设置进去就可以生效了。</font> 
+
+如果是使用了 Spring 对 WebSocket 的实现，可以参考：https://stackoverflow.com/questions/66482114/how-can-you-set-org-apache-tomcat-websocket-blocking-send-timeout
+
+下面介绍一些 Tomcat 针对 WebSocket 的实现所采用了一些配置属性：
+
+##### Timeout
 
 （1）`org.apache.tomcat.websocket.BLOCKING_SEND_TIMEOUT` 属性用于配置采用 blocking mode 的 WebSocket session 在发送消息时的写入超时时间，默认是 20000 毫秒（i.e. 20s），可以通过用户的配置文件去更改它；
 
@@ -371,6 +390,8 @@ Tomcat 的 WebSocket 实现采用了一些配置属性，比如下面这些：
 
 这两个属性和 `Session.setMaxIdleTimeout(long)` 方法有这样的关系：如果没有使用该方法，就会应用上面两个 read/write 超时属性，而且这两个属性可以同时设置也可以只设置一个。
 
+##### Message Handler
+
 （3）如果应用程序没有为 WebSocket 接收的 binary message 定义 `MessageHandler.Partial` 处理器实现，则一旦接收到 binary message，它们会先进入一个缓冲区（must be buffered），直到接收完整的 binary 消息后调用一次程序中注入的 `MessageHandler.Whole` 实现。
 
 针对 binary message，默认的 buffer size 是 8192 bytes（i.e. 8 MB）。web application 中可以通过设置 servlet context initialization parameter：`org.apache.tomcat.websocket.binaryBufferSize` 来改变缓冲区的大小。
@@ -381,9 +402,13 @@ web application 中可以通过设置 servlet context initialization parameter�
 
 （5）Java WebSocket specification 1.0 中规定 the first endpoint 在完成 WebSocket handshake 后就不允许在进行任何编程式的 deployment 了。而默认情况下 Tomcat 则允许进行额外的编程式 deployment。可以通过 `org.apache.tomcat.websocket.noAddAfterHandshake` servlet content initialization parameter 去控制相关行为。如果不想这样，可以通过设置系统属性 `org.apache.tomcat.websocket.STRICT_SPEC_COMPLIANCE` 为 true 即可，但是此时如果显式的配置了 servlet context 参数，则这些参数的优先级会更高。
 
+##### I/O Timeout
+
 （6）当 WebSocket client 同 server endpoint 建立 WebSocket 连接，且通过连接进行 I/O 操作，I/O connection 的超时机制由 `javax.websocket.ClientEndpointConfig` 提供的 `userProperties` 来控制。
 
 属性 `org.apache.tomcat.websocket.IO_TIMEOUT_MS` 可以控制 I/O 操作的超时时间，是一个字符串且以毫秒作为单位，默认是 5000（i.e. 5s）。
+
+##### Secure WebSocket connection
 
 （7）当 WebSocket client 想要连接一个具有安全机制的 secure server endpoint 时，`javax.websocket.ClientEndpointConfig` 提供的 `userProperties` 中可以配置 SSL，支持一下属性：
 
@@ -396,33 +421,36 @@ web application 中可以通过设置 servlet context initialization parameter�
 
 但是注意如果设置了 `org.apache.tomcat.websocket.SSL_CONTEXT` 属性，此时上面的 `org.apache.tomcat.websocket.SSL_TRUSTSTORE` 和 `org.apache.tomcat.websocket.SSL_TRUSTSTORE_PWD` 会失效。
 
-对于 secure server endpoint，默认会启用主机名校验（host name verification）
+对于 secure server endpoint，默认会启用主机名校验（host name verification），如果想要绕过这层安全限制（当然是不推荐这样做的，开发者可以提供自己的 SSLContext 实现，并通过设置 `org.apache.tomcat.websocket.SSL_CONTEXT` 用户属性指向该实现。需要注意的是我们定制的 `SSLContext`使用的 `TrustManager` 必须是继承自 `javax.net.ssl.X509ExtendedTrustManager` 的实现，通过覆盖其中的特定方法来决定是否采用特殊的验证方式或者不进行验证。
+
+（8）当 WebSocket Client 和 server endpoint 建立 connection 时，client 进行 HTTP 重定向的次数由 `javax.websocket.ClientEndpointConfig` 提供的 `userProperties` 中的 `org.apache.tomcat.websocket.MAX_REDIRECTIONS` 属性决定的，默认值是 20，如果该值为 0 则表示禁用 HTTP 重定向。
+
+（9）如果同 client 建立 connection 的 server endpoint 要求 BASIC 或者 DIGEST 认证，则可以采用下面的配置属性：
+
+- `org.apache.tomcat.websocket.WS_AUTHENTICATION_USER_NAME`
+- `org.apache.tomcat.websocket.WS_AUTHENTICATION_PASSWORD`
+
+此外，目标 server 如果指定了特定的 realm，那么 WebSocket client 也可以配置为针对特定的 realm 发送 credentials（凭据），相关属性如下：
+
+- `org.apache.tomcat.websocket.WS_AUTHENTICATION_REALM`
+
+（10）如果 WebSocket client 是通过 proxy forward 和 server endpoint 建立连接的（也可以理解为 server endpoint 外面有一层 gateway），并且这个 proxy 也需要 BASIC 或者 DIGEST 认证，则需要设置以下 user properties：
+
+- `org.apache.tomcat.websocket.WS_PROXY_AUTHENTICATION_USER_NAME`
+- `org.apache.tomcat.websocket.WS_PROXY_AUTHENTICATION_PASSWORD`
+
+此外，在此种情况下如果也指定了特定了 realm 才发送 credentials 则可以通过这个属性来配置 realm：
+
+- `org.apache.tomcat.websocket.WS_PROXY_AUTHENTICATION_REALM`
 
 
 
 TODO：
 
-For secure server end points, host name verification is enabled by default. To bypass this verification (not recommended), it is necessary to provide a custom `SSLContext` via the `org.apache.tomcat.websocket.SSL_CONTEXT` user property. The custom `SSLContext` must be configured with a custom `TrustManager` that extends `javax.net.ssl.X509ExtendedTrustManager`. The desired verification (or lack of verification) can then be controlled by appropriate implementations of the individual abstract methods.
+注意在 Spring Boot 中内嵌的 Tomcat 如果同时要使用 WebSocket 功能，需要这样：
 
-When using the WebSocket client to connect to server endpoints, the number of HTTP redirects that the client will follow is controlled by the `userProperties` of the provided `javax.websocket.ClientEndpointConfig`. The property is org.apache.tomcat.websocket.MAX_REDIRECTIONS. The default value is 20. Redirection support can be disabled by configuring a value of zero.
-
-When using the WebSocket client to connect to a server endpoint that requires BASIC or DIGEST authentication, the following user properties must be set:
-
-- `org.apache.tomcat.websocket.WS_AUTHENTICATION_USER_NAME`
-- `org.apache.tomcat.websocket.WS_AUTHENTICATION_PASSWORD`
-
-Optionally, the WebSocket client can be configured only to send credentials if the server authentication challenge includes a specific realm by defining that realm in the optional user property:
-
-- `org.apache.tomcat.websocket.WS_AUTHENTICATION_REALM`
-
-When using the WebSocket client to connect to a server endpoint via a forward proxy (also known as a gateway) that requires BASIC or DIGEST authentication, the following user properties must be set:
-
-- `org.apache.tomcat.websocket.WS_PROXY_AUTHENTICATION_USER_NAME`
-- `org.apache.tomcat.websocket.WS_PROXY_AUTHENTICATION_PASSWORD`
-
-Optionally, the WebSocket client can be configured only to send credentials if the server authentication challenge includes a specific realm by defining that realm in the optional user property:
-
-- `org.apache.tomcat.websocket.WS_PROXY_AUTHENTICATION_REALM`
+- https://stackoverflow.com/questions/52185059/use-java-websocket-api-in-spring-boot-application
+- https://thegeekyasian.com/websocket-in-spring-boot/
 
 
 
@@ -438,4 +466,19 @@ TODO：后续步骤
   - org.springframework.boot.autoconfigure.web.servlet.ServletWebServerFactoryAutoConfiguration
   - org.springframework.boot.autoconfigure.websocket.servlet.WebSocketServletAutoConfiguration
   - org.springframework.boot.autoconfigure.websocket.servlet.WebSocketMessagingAutoConfiguration
+  
+  
 
+#### Ping/Pong Implementation
+
+RFC 中也定义了关于 server 和 client 的 ping/pong 交互模式，往往用于 client 和 server 的 connection 心跳机制。
+
+可以参考：https://dzone.com/articles/ping-pong-implementation-jsr-356
+
+参考：
+
+- https://dzone.com/articles/ping-pong-implementation-jsr-356
+- https://github.com/abhijeetashri/websocket-ping-pong-java/blob/main/src/com/websocket/pingpong/endpoint/WebsocketEventsEndpoint.java
+- https://github.com/morgwai/servlet-utils
+- https://github.com/morgwai/servlet-scopes
+- https://github.com/morgwai/servlet-scopes
