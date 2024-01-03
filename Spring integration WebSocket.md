@@ -10,7 +10,7 @@
 - https://javaee.github.io/javaee-spec/ （这里可以看企业级 Java 开发相关的 api 和文档，比如 javax.websocket 下的类的 api 文档）
 - https://github.com/jakartaee （the current, active Enterprise Java development organization）
 
-对于大多数 web 拥有程序而言，基于 HTTP 的请求-响应模型有一定的局限性，信息只能通过一次次请求进行传递，无法持续的传输信息。
+对于大多数 web 应用程序而言，基于 HTTP 的请求-响应模型有一定的局限性，信息只能通过一次次请求进行传递，无法持续的传输信息。
 
 过去采用了多种方式来解决这个问题，比如长轮询和 Comet 技术（HTTP 长连接的 "服务器推"），但是它们还是有一定的缺陷。
 
@@ -445,6 +445,182 @@ web application 中可以通过设置 servlet context initialization parameter�
 
 
 
+#### Ping/Pong Implementation
+
+RFC 中也定义了关于 server 和 client 的 ping/pong 交互模式，往往用于 client 和 server 的 connection 心跳机制。
+
+可以参考：https://dzone.com/articles/ping-pong-implementation-jsr-356
+
+参考：
+
+- https://dzone.com/articles/ping-pong-implementation-jsr-356
+- https://github.com/abhijeetashri/websocket-ping-pong-java/blob/main/src/com/websocket/pingpong/endpoint/WebsocketEventsEndpoint.java
+- https://github.com/morgwai/servlet-utils
+- https://github.com/morgwai/servlet-scopes
+- https://github.com/morgwai/servlet-scopes
+
+
+
+## Spring Boot WebSocket
+
+参考：https://docs.spring.io/spring-framework/docs/5.3.31/reference/html/web.html#websocket-server
+
+### Spring WebSocket Support
+
+Spring 体系对 WebSocket 的支持：
+
+- Spring Framework 提供了 WebSocket API（包括 client 和 server）；
+  - Spring 的 WebSocket Support 并不依赖于 Spring MVC；
+  - 包：spring-websocket-${latest}.jar
+
+### Spring MVC Integrate WebSocket
+
+- Spring MVC 可以很容易集成 Spring WebSocket API：
+  - DispatchServlet 既可以处理常规的 HTTP 请求，也可以处理 WebSocket 的 handshake 请求；
+  - 但是需要注意如果是和 JSR 356 一块工作就需要注意一些东西；
+  - Java WebSocket API（JSR-356）提供两种部署机制：
+    - 第一种涉及到在应用启动时扫描类路径下是否存在 Servlet Container，这也是 servlet 3 的一个特性；
+    - 第二种在 Servlet 容器启动的时候使用相关的 registration API；
+    - 但是这两种机制都没法使用一个 "front controller" 去同时处理 websocket 的 handshake 和其他常规 HTTP 请求，比如 Spring MVC 的 DispatchServlet；
+  - 这是一个 JSR 356 的一个重要的限制，Spring MVC 为了解决这个问题，利用了特定 servlet server （Tomcat 等等）对 `RequestUpgradeStrategy` API 的实现。
+  - 这样的策略在 Tomcat、Jetty、GlassFish、WebLogic，WebSphere、Undertow 中都存在。
+
+```
+针对取消 JSR 356 的这个限制的请求可以参考：https://github.com/jakartaee/websocket/issues/211
+Tomcat、Undertow、WebSphere 都提供了自己的 API 替代方案。
+```
+
+第二个需要考虑的是支持 JSR-356 的 Servlet Containers 会去扫描 `ServletContainerInitializer`（SCI），这可能会拖慢应用启动速度。在某些场景下，比如升级到具有JSR-356支持的Servlet容器版本后观察到重大影响，则应该可以通过使用web.xml中的 &lt;absolute-ordering /&gt;元素来选择性地启用或禁用 web fragments (和 SCI 扫描)，如下面的示例所示：
+
+```xml
+<web-app xmlns="http://java.sun.com/xml/ns/javaee"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="
+        http://java.sun.com/xml/ns/javaee
+        https://java.sun.com/xml/ns/javaee/web-app_3_0.xsd"
+    version="3.0">
+
+    <absolute-ordering/>
+
+</web-app>
+```
+
+也可以有选择性的开启某些 web fragments，通过名字指定就行，比如 Spring 的 `SpringServletContainerInitializer`，该类提供了 Servlet 3 Java Initialization API：
+
+```xml
+<web-app xmlns="http://java.sun.com/xml/ns/javaee"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="
+        http://java.sun.com/xml/ns/javaee
+        https://java.sun.com/xml/ns/javaee/web-app_3_0.xsd"
+    version="3.0">
+
+    <absolute-ordering>
+        <name>spring_web</name>
+    </absolute-ordering>
+
+</web-app>
+```
+
+
+
+### WebSocket Server Configuration
+
+每个底层的 WebSocket Engine 都会暴露一些配置给开发人员调整，比如前面提到的 Tomcat 允许配置的几个属性，如消息 buffer size、idle timeout 等等。
+
+> Tomcat、WildFly、GlassFish
+
+在 Spring 应用中，针对 Tomcat、WildFly 和 GlassFish，可以在配置类中注入定制的 `ServletServerContainerFactoryBean` 即可，比如下面这样：
+
+```java
+@Configuration
+@EnableWebSocket
+public class WebSocketConfig implements WebSocketConfigurer {
+
+    @Bean
+    public ServletServerContainerFactoryBean createWebSocketContainer() {
+        ServletServerContainerFactoryBean container = new ServletServerContainerFactoryBean();
+        container.setMaxTextMessageBufferSize(8192);
+        container.setMaxBinaryMessageBufferSize(8192);
+        return container;
+    }
+
+}
+```
+
+如果是 client-size 需要改动 WebSocket 的配置，则使用 `WebSocketContainerFactoryBean`。
+
+> Jetty
+
+如果用的是 Jetty 实现，则需要提供一个预先定制好的 `WebSocketServerFactory` 示例，并把它注入 Spring 的 `DefaultHandshakeHandler` 中：
+
+```java
+@Configuration
+@EnableWebSocket
+public class WebSocketConfig implements WebSocketConfigurer {
+
+    @Override
+    public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
+        registry.addHandler(echoWebSocketHandler(),
+            "/echo").setHandshakeHandler(handshakeHandler());
+    }
+
+    @Bean
+    public DefaultHandshakeHandler handshakeHandler() {
+
+        WebSocketPolicy policy = new WebSocketPolicy(WebSocketBehavior.SERVER);
+        policy.setInputBufferSize(8192);
+        policy.setIdleTimeout(600000);
+
+        return new DefaultHandshakeHandler(
+                new JettyRequestUpgradeStrategy(new WebSocketServerFactory(policy)));
+    }
+
+}
+```
+
+
+
+### Allowed Origins
+
+Spring Framework 4.1.5 中，WebSocket 和 SockJS 默认的行为是接收同源请求，也可以允许某个特地的来源集合。这个检测主要是为 browser clients 设计的，不影响其他 clients。
+
+The three possible behaviors are:
+
+- Allow only same-origin requests (default): In this mode, when SockJS is enabled, the Iframe HTTP response header `X-Frame-Options` is set to `SAMEORIGIN`, and JSONP transport is disabled, since it does not allow checking the origin of a request. As a consequence, IE6 and IE7 are not supported when this mode is enabled.
+- Allow a specified list of origins: Each allowed origin must start with `http://` or `https://`. In this mode, when SockJS is enabled, IFrame transport is disabled. As a consequence, IE6 through IE9 are not supported when this mode is enabled.
+- Allow all origins: To enable this mode, you should provide `*` as the allowed origin value. In this mode, all transports are available.
+
+You can configure WebSocket and SockJS allowed origins, as the following example shows:
+
+```java
+import org.springframework.web.socket.config.annotation.EnableWebSocket;
+import org.springframework.web.socket.config.annotation.WebSocketConfigurer;
+import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry;
+
+@Configuration
+@EnableWebSocket
+public class WebSocketConfig implements WebSocketConfigurer {
+
+    @Override
+    public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
+        registry.addHandler(myHandler(), "/myHandler").setAllowedOrigins("https://mydomain.com");
+    }
+
+    @Bean
+    public WebSocketHandler myHandler() {
+        return new MyHandler();
+    }
+
+}
+```
+
+
+
+
+
+
+
 TODO：
 
 注意在 Spring Boot 中内嵌的 Tomcat 如果同时要使用 WebSocket 功能，需要这样：
@@ -466,19 +642,3 @@ TODO：后续步骤
   - org.springframework.boot.autoconfigure.web.servlet.ServletWebServerFactoryAutoConfiguration
   - org.springframework.boot.autoconfigure.websocket.servlet.WebSocketServletAutoConfiguration
   - org.springframework.boot.autoconfigure.websocket.servlet.WebSocketMessagingAutoConfiguration
-  
-  
-
-#### Ping/Pong Implementation
-
-RFC 中也定义了关于 server 和 client 的 ping/pong 交互模式，往往用于 client 和 server 的 connection 心跳机制。
-
-可以参考：https://dzone.com/articles/ping-pong-implementation-jsr-356
-
-参考：
-
-- https://dzone.com/articles/ping-pong-implementation-jsr-356
-- https://github.com/abhijeetashri/websocket-ping-pong-java/blob/main/src/com/websocket/pingpong/endpoint/WebsocketEventsEndpoint.java
-- https://github.com/morgwai/servlet-utils
-- https://github.com/morgwai/servlet-scopes
-- https://github.com/morgwai/servlet-scopes
