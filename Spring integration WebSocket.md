@@ -470,18 +470,19 @@ RFC 中也定义了关于 server 和 client 的 ping/pong 交互模式，往往�
 Spring 体系对 WebSocket 的支持：
 
 - Spring Framework 提供了 WebSocket API（包括 client 和 server）；
-  - Spring 的 WebSocket Support 并不依赖于 Spring MVC；
+  - Spring 的 WebSocket Support 并不强制依赖于 Spring MVC，其他框架也可以实现 Spring 提出的 WebSocket 相关接口。
   - 包：spring-websocket-${latest}.jar
 
 ### Spring MVC Integrate WebSocket
 
 - Spring MVC 可以很容易集成 Spring WebSocket API：
   - DispatchServlet 既可以处理常规的 HTTP 请求，也可以处理 WebSocket 的 handshake 请求；
+  - 在其他的 http 处理场景中，也可以借助 WebSocketHttpRequestHandler 实现对 WebScoket 的支持；
   - 但是需要注意如果是和 JSR 356 一块工作就需要注意一些东西；
   - Java WebSocket API（JSR-356）提供两种部署机制：
-    - 第一种涉及到在应用启动时扫描类路径下是否存在 Servlet Container，这也是 servlet 3 的一个特性；
-    - 第二种在 Servlet 容器启动的时候使用相关的 registration API；
-    - 但是这两种机制都没法使用一个 "front controller" 去同时处理 websocket 的 handshake 和其他常规 HTTP 请求，比如 Spring MVC 的 DispatchServlet；
+    - 第一种基于注解的方式涉及到在应用程序启动时 Servlet Container 的 classpath scan，这也是 servlet 3 的一个特性；
+    - 第二种基于接口的方式则是借助了 SPI 功能，在 Servlet 容器启动的时候使用相关的 registration API 注入开发者提供的实现；
+    - 但是这两种机制都没法使用一个 "front controller" （比如 Spring MVC 的 DispatchServlet）去同时处理 websocket 的 handshake 和其他常规 HTTP 请求；
   - 这是一个 JSR 356 的一个重要的限制，Spring MVC 为了解决这个问题，利用了特定 servlet server （Tomcat 等等）对 `RequestUpgradeStrategy` API 的实现。
   - 这样的策略在 Tomcat、Jetty、GlassFish、WebLogic，WebSphere、Undertow 中都存在。
 
