@@ -618,6 +618,32 @@ public class WebSocketConfig implements WebSocketConfigurer {
 
 
 
+## Example
+
+前面已经了解过 WebSocket 的相关规范以及在 Java 中的应用，主要有以下要点：
+
+- [RFC 6455](https://datatracker.ietf.org/doc/html/rfc6455)
+- [JSR 356](https://jcp.org/en/jsr/detail?id=356)
+- Tomcat 对 JSR 356 的实现
+- Spring MVC 对 WebSocket 的支持；
+  - 以及是如何解决 Spring WebSocket 结合 JSR 356 运行时环境的
+
+创建一个 Spring Boot 工程，选择的版本是 2.7.17，由于是内嵌了 Tomcat，如果需要针对 WebSocket Server 端做一些配置就需要通过  Java Config 的方式。
+
+Spring Boot websocket starter 中注入了 Spring websocket 依赖，真正负责处理 WebSocket 协议的其实还是底层的 servlet container 实现，这里默认使用 Tomcat。
+
+- Servlet Container 实现负责提供 JSR 356 runtime；
+
+- Spring MVC 的 DispatchServlet 可以处理 websocket 的 upgrade 请求以及其他正常的 http 请求；
+- Spring 的 websocket 模块负责提供更多强大的功能：
+  - 建立 websocket connection 时可以做一些操作；
+  - 不同消息类型的 handler 实现；
+  - 等等
+
+<font style="color:blue">注意：可以参考多个版本的 Spring doc 的 websocket 章节。</font>
+
+
+
 
 
 
