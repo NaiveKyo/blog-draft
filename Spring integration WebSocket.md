@@ -625,7 +625,7 @@ public class WebSocketConfig implements WebSocketConfigurer {
 - [RFC 6455](https://datatracker.ietf.org/doc/html/rfc6455)
 - [JSR 356](https://jcp.org/en/jsr/detail?id=356)
 - Tomcat 对 JSR 356 的实现
-- Spring MVC 对 WebSocket 的支持；
+- Spring 对 WebSocket 的支持；
   - 以及是如何解决 Spring WebSocket 结合 JSR 356 运行时环境的
 
 创建一个 Spring Boot 工程，选择的版本是 2.7.17，由于是内嵌了 Tomcat，如果需要针对 WebSocket Server 端做一些配置就需要通过  Java Config 的方式。
@@ -640,11 +640,23 @@ Spring Boot websocket starter 中注入了 Spring websocket 依赖，真正负�
   - 不同消息类型的 handler 实现；
   - 等等
 
-<font style="color:blue">注意：可以参考多个版本的 Spring doc 的 websocket 章节。</font>
+<font style="color:blue">注意：可以参考多个版本的 Spring doc 的 websocket 章节。Spring 是从 4.0 版本开始支持 websocket 的。</font>
 
+### Spring 4.0 WebSocket Support
 
+文档地址：https://docs.spring.io/spring-framework/docs/4.0.0.RELEASE/spring-framework-reference/html/websocket.html
 
+从 Spring 4.0 开始新增了两个模块：
 
+- `spring-websocket` module：为 web application 提供双向的基于 WebSocket 的通信机制。主要是为了适配  JSR-356。同时考虑到有些浏览器不支持 websocket，Spring 也提供了一种可选措施：SockJS-based（i.e. WebSocket emulation），比如 IE < 10 的版本。
+- `spring-messaging` module：
+  - 增加了对 STOMP 的支持，STOMP 是 WebSocket 的子协议。在基于注解的编程模式中，一个 @Controller 可以同时使用 @RequestMapping 和 @MessageMapping，前者可以处理 HTTP 请求，后者可以处理 WebSocket-clients 发送过来的 message；
+  - 该模块同时提供 Spring-Integration 工程中的某些核心抽象，比如：Message、MessageChannel、MessageHandler，以及其他基础设施，主要服务于 messaging applications。
+
+关于 WebSocket 的更多细节应该参考 [RFC 6455](https://datatracker.ietf.org/doc/html/rfc6455)，在本文中至少应该明白 HTTP 是如何 initial handshake，这依赖于 HTTP 的一项机制：protocol upgrad（i.e. protocol switch），server 通过返回响应码 101 表示同意客户端的协议升级请求，假设 handshake 成功，HTTP upgrad request 底层的 TCP socket 就会保持 open 状态，此时 server 和 client 就可以进行双向通信了。
+
+- Spring Framework 4 的 spring-websocket 模块为 WebSocket 提供了全面的支持，同时兼容了 Java WebSocket API（JSR-356），同时提供其他功能；
+- 但是有些时候客服端是不支持 WebSocket 协议的，比如某些浏览器不支持 WebSocket 协议，或者在一些特殊的场景中使用了严格的代理策略也可能会阻止 HTTP upgrade 请求，毕竟该请求要维持很长时间的连接（可以参考这篇文章：[How HTML5 Web Sockets Interact With Proxy Servers](https://www.infoq.com/articles/Web-Sockets-Proxy-Servers/)）
 
 
 
