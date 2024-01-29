@@ -648,15 +648,85 @@ Spring Boot websocket starter 中注入了 Spring websocket 依赖，真正负�
 
 从 Spring 4.0 开始新增了两个模块：
 
-- `spring-websocket` module：为 web application 提供双向的基于 WebSocket 的通信机制。主要是为了适配  JSR-356。同时考虑到有些浏览器不支持 websocket，Spring 也提供了一种可选措施：SockJS-based（i.e. WebSocket emulation），比如 IE < 10 的版本。
+- `spring-websocket` module：为 web application 提供双向的基于 WebSocket 的通信机制。主要是为了适配  JSR-356。同时考虑到有些浏览器（比如 IE < 10 的版本）不支持 websocket，Spring 也提供了一种可选措施：SockJS-based（i.e. WebSocket emulation）；
 - `spring-messaging` module：
   - 增加了对 STOMP 的支持，STOMP 是 WebSocket 的子协议。在基于注解的编程模式中，一个 @Controller 可以同时使用 @RequestMapping 和 @MessageMapping，前者可以处理 HTTP 请求，后者可以处理 WebSocket-clients 发送过来的 message；
-  - 该模块同时提供 Spring-Integration 工程中的某些核心抽象，比如：Message、MessageChannel、MessageHandler，以及其他基础设施，主要服务于 messaging applications。
+  - 该模块同时也负责提供 Spring-Integration 工程中的某些核心抽象，比如：Message、MessageChannel、MessageHandler，以及其他基础设施，主要服务于 messaging applications。
 
-关于 WebSocket 的更多细节应该参考 [RFC 6455](https://datatracker.ietf.org/doc/html/rfc6455)，在本文中至少应该明白 HTTP 是如何 initial handshake，这依赖于 HTTP 的一项机制：protocol upgrad（i.e. protocol switch），server 通过返回响应码 101 表示同意客户端的协议升级请求，假设 handshake 成功，HTTP upgrad request 底层的 TCP socket 就会保持 open 状态，此时 server 和 client 就可以进行双向通信了。
+关于 WebSocket 的更多细节应该参考 [RFC 6455](https://datatracker.ietf.org/doc/html/rfc6455)，在本文中至少应该明白 HTTP 是如何 initial handshake，这依赖于 HTTP 的一项机制：protocol upgrade（i.e. protocol switch），server 通过返回响应码 101 表示同意客户端的协议升级请求，假设 handshake 成功，HTTP upgrad request 底层的 TCP socket 就会保持 open 状态，此时 server 和 client 就可以进行双向通信了。
 
 - Spring Framework 4 的 spring-websocket 模块为 WebSocket 提供了全面的支持，同时兼容了 Java WebSocket API（JSR-356），同时提供其他功能；
-- 但是有些时候客服端是不支持 WebSocket 协议的，比如某些浏览器不支持 WebSocket 协议，或者在一些特殊的场景中使用了严格的代理策略也可能会阻止 HTTP upgrade 请求，毕竟该请求要维持很长时间的连接（可以参考这篇文章：[How HTML5 Web Sockets Interact With Proxy Servers](https://www.infoq.com/articles/Web-Sockets-Proxy-Servers/)）
+- 但是有些时候客户端是不支持 WebSocket 协议的，比如某些浏览器不支持 WebSocket 协议，或者在一些特殊的场景中使用了严格的代理策略也可能会阻止 HTTP upgrade 请求，毕竟该请求要维持很长时间的连接（可以参考这篇文章：[How HTML5 Web Sockets Interact With Proxy Servers](https://www.infoq.com/articles/Web-Sockets-Proxy-Servers/)）
+  - 因此如果你想要构建一个基于 WebSocket 的应用，有时候能够模拟 WebSocket API 的备选方案是不可缺少的。在 Spring framework 中，基于 [SockJS protocol](https://github.com/sockjs/sockjs-protocol) 提供了一种透明的备选方案，通过开启相关配置就可以使用它。
+
+#### Messaging Architecture
+
+在使用 WebSocket 的时候有些设计理念应该尽早考虑到，特别是此类应用和常规 web application 的差异。
+
+当今 REST 是一种广泛使用的 web application 架构，它依赖于 URLs、HTTP methods，以及其他某些设计原则，比如 hypermedia（links），stateless 等等。
+
+和它们相比，WebSocket 仅仅使用一个 URL，而且该 URL 就是为了初始化 HTTP handshake。此后，所有的消息都是在这一条 connection 中 share and flow。这是一种完全不同的、异步的、基于事件驱动的消息架构。它更接近于传统的 messaging applications（e.g. JMS, AMQP）。
+
+Spring Framework 包含了一个新的 `spring-messaging` 模块，这个模块为 `spring-integration` 工程提供了一些核心的抽象，比如 Message、MessageChannel、MessageHandler 以及其他服务于 messaging architecture 的基础设施。这个模块还包含了一些注解，可以将 message mapping 到某个 method 上，类似于 Spring MVC 的注解开发模式。
+
+#### Sub-Protocol Support
+
+WebSocket 提供了一种 `messaging architecture` ，但是没有强制要求使用特定的 `messaging protocol`。它是 TCP 上的一个轻量的一个 layer，主要功能就是将字节流转换为消息流（包括 text 和 binary），至于消息具体的含义则是由应用程序决定的。
+
+和 HTTP 这种 application-level protocol 不同，对于框架而言，WebSocket protocol 传输过来的消息携带的信息非常少，没法基于这些信息去 route and process 数据。可以看出来，WebSocket 所在的层次确实比较低，除了某些特殊的应用需要针对底层做很多处理，其他的应用要使用它一般会构造一个基于 WebSocket 的更上层的框架。这就和现在的 web 应用会使用 web 框架而不是单独的 Servlet API 是类似的道理。
+
+出于这个原因，WebSocket RFC 定义了 [sub protocols](https://datatracker.ietf.org/doc/html/rfc6455#section-1.9)。在进行 handshake 的时候，客户端和服务端可以使用 `Sec-WebSocket-Protocol` 头来采用某个 sub-protocol（也就是一个更高级的 application-level 的协议）。使用 sub-protocol 并不是必须的，但是如果不用，应用程序依然需要选择一个 client 和 server 都能理解的消息格式，这种格式可以是定制的，也可以是某些框架提供的，也可以是一种标准的消息协议。
+
+Spring Framework 提供了对 [STOMP](https://stomp.github.io/stomp-specification-1.2.html#Abstract) 的支持 —— 一种简单的消息协议，最早用于脚本语言，inspired by HTTP。
+
+#### WebSocket Server
+
+Spring Framework 提供了一套可以适配多种 WebSocket engines 的 WebSocket API。比如说，它可以运行在 Tomcat（7.0.47+）提供的 JSR-356 runtimes 中，或者 GlassFish（4.0+），也可以适配其他 WebSocket runtimes，比如说 Jetty（9.0+）提供的 native WebSocket Support。
+
+注意：
+
+正如前面了解到的，直接使用 WebSocket API 对于应用程序而言是非常底层的 —— 在消息的格式被确定之前，框架没法通过注解去解释并路由消息。这就是为啥程序需要考虑使用一种 sub-protocol。
+
+当我们使用一个高层次的 protocol 时，WebSocket API 的细节就没那么重要了，这就和使用 HTTP 时，TCP communication 也不会暴露给应用程序。
+
+> 一、WebSocketHandler
+
+想要创建一个 WebSocket Server 是很简单的，可以去实现 `WebSocketHandler` 接口，也可以扩展它的实现类 `TextWebSocketHandler` 或者 `BinaryWebSocketHandler`。（接口 - 抽象类 - 具体实现 - 应用程序扩展）
+
+```java
+public class MyHandler extends TextWebSocketHandler {
+
+    @Override
+    protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
+        // TODO 针对文本消息的特定处理逻辑
+    }
+    
+}
+```
+
+下面通过 java-config 为某个特定的 URL 注入我们的文本消息处理器：
+
+```java
+@Configuration
+@EnableWebSocket
+public class WebSocketConfiguration implements WebSocketConfigurer {
+    
+    @Override
+    public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
+        registry.addHandler(myHandler(), "/myHandler");
+    }
+    
+    @Bean
+    public WebSocketHandler myHandler() {
+        return new MyHandler();
+    }
+    
+}
+```
+
+如果是在 Spring MVC 应用程序中且存在 DispatchServlet 的配置（因为要借助 DispatchServlet 去处理 Upgrade 请求），就可以使用上面的配置，但是注意 Spring Websocket support 并不强依赖 Spring MVC 框架，也可以集成到其他提供 HTTP 处理机制的 Web 框架，此时可以用 `WebSocketHttpRequestHandler` 实现。
+
+
 
 
 
